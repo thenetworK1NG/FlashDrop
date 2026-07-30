@@ -351,12 +351,13 @@ async function sendFiles() {
     var ps = $('pct-sender'), pr = $('pct-receiver');
     if (ps) ps.textContent = '0%';
     if (pr) pr.textContent = '0%';
+    _lastPct = -1;
+    _throttleTimer = 0;
+    clearSummary();
 
     for (const file of files) {
         await sendSingleFile(file);
     }
-
-    setTimeout(() => { $('progress-section').classList.add('hidden'); }, 4000);
 }
 
 // ===================== ADAPTIVE STREAMING ENGINE =====================
@@ -410,13 +411,13 @@ async function sendSingleFile(file) {
         if (dc.bufferedAmount >= BUF_TARGET) await waitBufferDrain();
     }
 
-    // Report final throughput
-    var elapsed = (Date.now() - throughput.start) / 1000;
-    var speed = elapsed > 0 ? (throughput.bytes * 8) / elapsed : 0;
-    $('progress-label').textContent = 'Sent: ' + file.name + ' @ ' + fmtSpeed(speed);
-
     dc.send(JSON.stringify({ type: 'file-end', fileId, name: file.name }));
     updateProgress(1);
+
+    var elapsed = (Date.now() - throughput.start) / 1000;
+    var speed = elapsed > 0 ? (throughput.bytes * 8) / elapsed : 0;
+    $('progress-label').textContent = 'Sent ' + file.name;
+    showSummary(file.name, elapsed, speed);
 }
 
 function handleMsg(data) {
@@ -436,6 +437,9 @@ function handleMsg(data) {
                     if (rf) rf.style.height = '0%';
                     var pr = $('pct-receiver');
                     if (pr) pr.textContent = '0%';
+                    _lastPct = -1;
+                    _throttleTimer = 0;
+                    clearSummary();
                     $('progress-label').textContent = 'Receiving ' + msg.name;
                     updateProgress(0);
                     break;
@@ -444,15 +448,13 @@ function handleMsg(data) {
                         const blob = new Blob(recvBuffer.chunks, { type: recvBuffer.mimeType });
                         dlBlob(blob, recvBuffer.name);
                         addReceived(recvBuffer.name, recvBuffer.size);
+                        updateProgress(1);
+                        $('progress-label').textContent = 'Received ' + recvBuffer.name;
                         if (recvBuffer.rxStart) {
                             var rxElapsed = (Date.now() - recvBuffer.rxStart) / 1000;
                             var rxSpeed = rxElapsed > 0 ? (recvBuffer.size * 8) / rxElapsed : 0;
-                            $('progress-label').textContent = 'Received: ' + recvBuffer.name + ' @ ' + fmtSpeed(rxSpeed);
-                        } else {
-                            $('progress-label').textContent = 'Received: ' + recvBuffer.name;
+                            showSummary(recvBuffer.name, rxElapsed, rxSpeed);
                         }
-                        updateProgress(1);
-                        setTimeout(() => { $('progress-section').classList.add('hidden'); }, 4000);
                         recvBuffer = null;
                     }
                     break;
@@ -489,18 +491,47 @@ function addReceived(name, size) {
     container.prepend(div);
 }
 
+var _lastPct = -1;
+var _throttleTimer = 0;
+
 function updateProgress(fraction) {
-    const pct = Math.min(100, Math.round(fraction * 100));
-    // Sender: liquid drains (full → empty)
+    var pct = Math.min(100, Math.round(fraction * 100));
+    if (pct === _lastPct) return;
+    _lastPct = pct;
+    // Always update 0% and 100%; throttle intermediate to 100ms for smooth waves
+    if (pct > 0 && pct < 100 && Date.now() - _throttleTimer < 100) return;
+    _throttleTimer = Date.now();
     var s = $('liquid-sender');
     if (s) s.style.height = (100 - pct) + '%';
     var ps = $('pct-sender');
     if (ps) ps.textContent = pct + '%';
-    // Receiver: liquid fills (empty → full)
     var r = $('liquid-receiver');
     if (r) r.style.height = pct + '%';
     var pr = $('pct-receiver');
     if (pr) pr.textContent = pct + '%';
+}
+
+function fmtDuration(sec) {
+    if (sec < 1) return (sec * 1000).toFixed(0) + 'ms';
+    if (sec < 60) return sec.toFixed(1) + 's';
+    var m = Math.floor(sec / 60);
+    var s = (sec % 60).toFixed(0);
+    return m + 'm ' + s + 's';
+}
+
+function showSummary(name, elapsed, speed) {
+    var el = $('progress-summary');
+    if (!el) return;
+    el.innerHTML = '<span class="done">✓ Complete</span>' +
+        '<span class="sep">·</span>' +
+        '<span class="stat">' + fmtDuration(elapsed) + '</span>' +
+        '<span class="sep">·</span>' +
+        '<span class="stat">' + fmtSpeed(speed) + '</span>';
+}
+
+function clearSummary() {
+    var el = $('progress-summary');
+    if (el) el.innerHTML = '';
 }
 
 function disconnect() {
