@@ -39,7 +39,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 .hero h2{font-size:1.5rem;margin-bottom:8px}
 .hero p{color:var(--text-muted)}
 .actions{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;padding:20px 0}
-.qr-wrap{background:#fff;padding:16px;border-radius:16px;display:inline-flex}
+.qr-wrap{background:#fff;padding:16px;display:inline-flex}
 .qr-wrap canvas,.qr-wrap img,.qr-wrap svg{display:block;max-width:min(85vw,480px);width:100%;height:auto}
 .camera-box{width:100%;max-width:360px;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3}
 .camera-box video{width:100%;height:100%;object-fit:cover}
@@ -54,7 +54,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 .progress-box .label{font-size:.9rem;margin-bottom:8px;word-break:break-all}
 .progress-bar{width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
 .progress-fill{height:100%;background:var(--primary);border-radius:4px;transition:width .3s ease;width:0%}
-.progress-text{font-size:.8rem;color:var(--text-muted);margin-top:4px}
+.progress-text{text-align:right;font-size:.8rem;color:var(--text-muted);margin-top:4px}
 .send-section,.receive-section{width:100%;max-width:400px}
 .send-section h3,.receive-section h3{font-size:1rem;margin-bottom:12px;color:var(--text-muted)}
 .conn-status{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;width:100%;max-width:400px}
@@ -81,7 +81,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 <button id="btn-host" class="btn btn-primary" onclick="startHosting()">📤 Start Sharing</button>
 <button id="btn-join" class="btn btn-secondary" onclick="startJoining()">📥 Connect to Device</button>
 </div>
-<div id="known-peers"></div>
 </div>
 
 <!-- HOSTING -->
@@ -112,7 +111,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <!-- CONNECTED -->
 <div id="screen-connected" class="screen" style="justify-content:flex-start;padding-top:20px">
-<div class="conn-status"><span class="conn-dot"></span> Connected to <span id="conn-peer-name" style="font-weight:600">device</span></div>
+<div class="conn-status"><span class="conn-dot"></span> Connected</div>
 
 <div class="send-section">
 <h3>📤 Send Files</h3>
@@ -141,37 +140,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 <h2>Connecting...</h2>
 <p class="status" id="connect-status">Setting up secure connection</p>
 <div style="margin:20px;font-size:3rem;animation:pulse 1s infinite">⟳</div>
-</div>
-
-<!-- QUICK HOST (reconnect with short code) -->
-<div id="screen-quick-host" class="screen">
-<h2>Quick Connect</h2>
-<p class="status" id="quick-status">Generating...</p>
-<div id="quick-code-text" style="font-size:4rem;font-weight:700;color:var(--primary);letter-spacing:12px;text-align:center;padding:24px;background:var(--surface);border-radius:16px;border:2px solid var(--border);width:100%;max-width:300px;font-family:monospace">----</div>
-<p style="font-size:.85rem;color:var(--text-muted);margin:4px 0">Enter this code on the other device</p>
-<div class="qr-wrap" id="qrcode-quick" style="margin-top:4px;padding:8px"></div>
-<button class="btn btn-primary" onclick="showQuickHostEntry()">⌨️ Enter Reply Code</button>
-<button class="btn btn-text" onclick="disconnect();showScreen('home')">Cancel</button>
-</div>
-
-<!-- QUICK JOIN (enter host's code) -->
-<div id="screen-quick-join" class="screen">
-<h2>Enter Code</h2>
-<p class="status" id="quick-join-status">Enter the 4-character code</p>
-    <input id="quick-join-input" type="text" maxlength="4" style="width:100%;max-width:240px;padding:20px;font-size:3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none;font-family:monospace;text-transform:lowercase" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="abcd" oninput="var v=this.value.toLowerCase();if(v.length===4)submitQuickCode()">
-<button id="quick-join-submit" class="btn btn-primary" onclick="submitQuickCode()">Connect</button>
-<div class="qr-wrap" id="qrcode-quick-answer" style="margin-top:12px"></div>
-<div id="quick-join-result" style="font-size:4rem;font-weight:700;color:var(--accent);letter-spacing:12px;text-align:center;padding:24px;background:var(--surface);border-radius:16px;border:2px solid var(--border);width:100%;max-width:300px;font-family:monospace;display:none"></div>
-<button class="btn btn-text" onclick="showScreen('home')">Cancel</button>
-</div>
-
-<!-- QUICK HOST ENTRY (host types joiner's code back) -->
-<div id="screen-quick-host-entry" class="screen">
-<h2>Enter Reply Code</h2>
-<p class="status" id="quick-host-entry-status">Type the 4-character code from the other device</p>
-<input id="quick-host-entry-input" type="text" maxlength="4" style="width:100%;max-width:240px;padding:20px;font-size:3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none;font-family:monospace;text-transform:lowercase" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="abcd" oninput="var v=this.value.toLowerCase();if(v.length===4)completeQuickConnect(v)">
-<button id="quick-host-entry-submit" class="btn btn-primary" onclick="completeQuickConnect($('quick-host-entry-input').value)">Connect</button>
-<button class="btn btn-text" onclick="showScreen('quick-host')">Back</button>
 </div>
 </div>
 
