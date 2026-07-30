@@ -1,45 +1,57 @@
 'use strict';
 
-const CONFIG = {
+var CONFIG = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
-const CHUNK_SIZE = 16384;
-const SCAN_DELAY = 500;
+var CHUNK_SIZE = 16384;
+var SCAN_DELAY = 500;
+var ICE_TIMEOUT = 5000; // 5s timeout for ICE gathering
 
-let state = 'home';
-let pc = null;
-let dc = null;
-let isHost = false;
-let mediaStream = null;
-let scanTimer = null;
-let fileQueue = [];
-let qrHost = null;
-let qrAnswer = null;
-let recvBuffer = null;
-let autoConnected = false;
+var state = 'home';
+var pc = null;
+var dc = null;
+var isHost = false;
+var mediaStream = null;
+var scanTimer = null;
+var fileQueue = [];
+var qrHost = null;
+var qrAnswer = null;
+var recvBuffer = null;
+var autoConnected = false;
 
-const $ = id => document.getElementById(id);
+function $(id) { return document.getElementById(id); }
 
 function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
-    const el = $(id);
+    var screens = document.querySelectorAll('.screen');
+    for (var i = 0; i < screens.length; i++) {
+        screens[i].classList.remove('active');
+    }
+    var el = $(id);
     if (el) el.classList.add('active');
     state = id;
 }
 
 function waitForIceGathering(p) {
     if (p.iceGatheringState === 'complete') return Promise.resolve();
-    return new Promise(resolve => {
-        p.onicegatheringstatechange = () => {
-            if (p.iceGatheringState === 'complete') {
-                p.onicegatheringstatechange = null;
-                resolve();
-            }
-        };
-    });
+    return Promise.race([
+        new Promise(function(resolve) {
+            p.onicegatheringstatechange = function() {
+                if (p.iceGatheringState === 'complete') {
+                    p.onicegatheringstatechange = null;
+                    resolve();
+                }
+            };
+        }),
+        new Promise(function(resolve) {
+            setTimeout(function() { resolve(); }, ICE_TIMEOUT);
+        })
+    ]);
 }
 
 function formatSize(bytes) {
@@ -76,7 +88,8 @@ function tryConnect() {
 }
 
 async function startHosting() {
-    if (!window.RTCPeerConnection) return alert('WebRTC not supported in this browser.');
+    console.log('startHosting called');
+    if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     isHost = true;
     autoConnected = false;
     showScreen('hosting');
@@ -85,50 +98,71 @@ async function startHosting() {
     if (qrHost) { qrHost.clear(); qrHost = null; }
 
     try {
+        console.log('Creating RTCPeerConnection...');
         pc = new RTCPeerConnection(CONFIG);
-        pc.oniceconnectionstatechange = () => tryConnect();
-        pc.onicecandidate = null;
+        pc.oniceconnectionstatechange = function() { console.log('ICE state:', pc.iceConnectionState); tryConnect(); };
 
-        const channel = pc.createDataChannel('transfer');
+        var channel = pc.createDataChannel('transfer');
         setupDC(channel);
 
-        const offer = await pc.createOffer();
+        console.log('Creating offer...');
+        var offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        console.log('Waiting for ICE gathering...');
         await waitForIceGathering(pc);
 
-        const data = JSON.stringify({ type: 'offer', sdp: pc.localDescription.sdp });
+        var sdp = pc.localDescription.sdp;
+        console.log('Offer SDP length:', sdp.length);
+        var data = JSON.stringify({ type: 'offer', sdp: sdp });
         $('qrcode-host').innerHTML = '';
 
-        qrHost = new QRCode($('qrcode-host'), {
-            text: data,
-            width: 256,
-            height: 256,
-            colorDark: '#000000',
-            colorLight: '#ffffff',
-            correctLevel: QRCode.CorrectLevel.L
-        });
+        if (typeof QRCode === 'undefined') {
+            $('qrcode-host').innerHTML = '<p style="color:#000;padding:20px;text-align:center;word-break:break-all">QR library not loaded.<br>Check internet connection.<br><br>Session data:<br><small>' + data.substring(0, 100) + '...</small></p>';
+            $('host-status').textContent = 'Warning: QR library missing. Check console.';
+            console.error('QRCode library not loaded. CDN may be blocked.');
+        } else {
+            qrHost = new QRCode($('qrcode-host'), {
+                text: data,
+                width: 256,
+                height: 256,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.L
+            });
+        }
 
         $('host-status').textContent = 'Ask your friend to scan this QR code';
         $('btn-scan-answer').classList.remove('hidden');
+        console.log('Hosting ready');
     } catch (err) {
+        console.error('Hosting error:', err);
         $('host-status').textContent = 'Error: ' + err.message;
     }
 }
 
 async function startJoining() {
-    if (!navigator.mediaDevices || !window.RTCPeerConnection)
-        return alert('Camera or WebRTC not supported.');
+    console.log('startJoining called');
+    if (!navigator.mediaDevices) { alert('Camera access not supported in this browser.'); return; }
+    if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     isHost = false;
     autoConnected = false;
     showScreen('scanning');
     $('scan-status').textContent = 'Scan the QR code from the host device';
-    await initCamera();
+    try { await initCamera(); } catch (e) {
+        console.error('Camera init failed:', e);
+        alert('Could not open camera: ' + e.message);
+        showScreen('home');
+    }
 }
 
 async function hostScanAnswer() {
     showScreen('scanning');
     $('scan-status').textContent = 'Scan the reply QR from your friend\'s device';
-    await initCamera();
+    try { await initCamera(); } catch (e) {
+        console.error('Camera init failed:', e);
+        alert('Could not open camera: ' + e.message);
+        showScreen('home');
+    }
 }
 
 // ===================== CAMERA =====================
@@ -396,24 +430,57 @@ function disconnect() {
 }
 
 // ===================== INIT =====================
-document.addEventListener('DOMContentLoaded', () => {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+function init() {
+    console.log('QuickShare initializing...');
+    var b = $('btn-host');
+    if (!b) {
+        console.error('Critical: btn-host not found. App cannot initialize.');
+        return;
     }
-
-    $('btn-host').addEventListener('click', startHosting);
-    $('btn-join').addEventListener('click', startJoining);
+    b._listenerAttached = true;
+    // buttons use onclick in HTML as the primary handler
+    var b2 = $('btn-join');
+    if (b2) b2._listenerAttached = true;
+    // btn-host and btn-join use inline onclick; addEventListener not needed
     $('btn-scan-answer').addEventListener('click', hostScanAnswer);
-    $('btn-cancel-scan').addEventListener('click', () => { stopCamera(); showScreen('home'); });
+    $('btn-cancel-scan').addEventListener('click', function() { stopCamera(); showScreen('home'); });
     $('btn-back-host').addEventListener('click', disconnect);
     $('btn-select-files').addEventListener('click', selectFiles);
     $('file-input').addEventListener('change', onFilesSelected);
     $('btn-send').addEventListener('click', sendFiles);
-    $('file-list').addEventListener('click', (e) => {
-        const btn = e.target.closest('.btn-small');
+    $('file-list').addEventListener('click', function(e) {
+        var btn = e.target.closest('.btn-small');
         if (btn && btn.dataset.index !== undefined) {
             removeFile(parseInt(btn.dataset.index));
         }
     });
     $('btn-disconnect').addEventListener('click', disconnect);
-});
+    console.log('QuickShare initialized successfully');
+}
+
+// Support both DOMContentLoaded and direct execution
+// (scripts at end of body may run after DOM is ready)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+        try { init(); } catch (e) { console.error('Init error:', e); }
+    });
+} else {
+    try { init(); } catch (e) { console.error('Init error:', e); }
+}
+
+// Explicitly expose entry points to global scope for inline onclick
+window.startHosting = startHosting;
+window.startJoining = startJoining;
+window.hostScanAnswer = hostScanAnswer;
+window.selectFiles = selectFiles;
+window.sendFiles = sendFiles;
+window.disconnect = disconnect;
+
+// Register service worker (in try-catch for file:// safety)
+try {
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').catch(function() {});
+    }
+} catch (e) {
+    console.warn('SW registration not supported:', e);
+}

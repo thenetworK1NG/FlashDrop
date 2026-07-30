@@ -77,8 +77,8 @@ header p{color:var(--text-muted);font-size:.9rem}
 <p>Direct device-to-device. No servers, no uploads.</p>
 </div>
 <div class="actions">
-<button id="btn-host" class="btn btn-primary">📤 Start Sharing</button>
-<button id="btn-join" class="btn btn-secondary">📥 Connect to Device</button>
+<button id="btn-host" class="btn btn-primary" onclick="startHosting()">📤 Start Sharing</button>
+<button id="btn-join" class="btn btn-secondary" onclick="startJoining()">📥 Connect to Device</button>
 </div>
 </div>
 
@@ -144,6 +144,21 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>console.log('Pre-check: QRCode=' + (typeof QRCode) + ' jsQR=' + (typeof jsQR) + ' app.js loading...');</script>
 <script src="app.js"></script>
+
+<script>
+console.log('Post-check: app.js loaded', typeof startHosting);
+// Safety: fallback if app.js didn't load (e.g. syntax error)
+(function() {
+    var btn1 = document.getElementById('btn-host');
+    var btn2 = document.getElementById('btn-join');
+    if (typeof startHosting !== 'function') {
+        console.warn('FALLBACK: startHosting not found. app.js may have failed.');
+        btn1.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
+        btn2.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
+    }
+})();
+</script>
 </body>
 </html>
