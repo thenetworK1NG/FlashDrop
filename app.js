@@ -254,7 +254,10 @@ function derivePwd(code, salt) {
 }
 
 function applyCodeToSdp(sdp, code, salt) {
-    var u = code;
+    // ufrag: 8 chars = code + 4-char hash suffix (RFC says ≥4 but some Android needs longer)
+    var h = 0;
+    for (var i = 0; i < (code + salt).length; i++) { h = ((h << 5) - h) + (code + salt).charCodeAt(i); h |= 0; }
+    var u = code + Math.abs(h).toString(36).substr(0, 4);
     var p = derivePwd(code, salt);
     var r = sdp.replace(/^a=ice-ufrag:\S+$/m, 'a=ice-ufrag:' + u);
     r = r.replace(/^a=ice-pwd:\S+$/m, 'a=ice-pwd:' + p);
@@ -263,6 +266,7 @@ function applyCodeToSdp(sdp, code, salt) {
 
 // Host: generate 4-char code, create offer with short credentials, show code
 async function startQuickHost(peerId) {
+    if (quickConnecting) return;
     console.log('startQuickHost for', peerId);
     if (!window.RTCPeerConnection) { alert('WebRTC not supported.'); return; }
     isHost = true;
@@ -284,15 +288,18 @@ async function startQuickHost(peerId) {
         localStorage.setItem('qs_quick_peer', peerId);
 
         pc = new RTCPeerConnection(CONFIG);
-        pc.oniceconnectionstatechange = function() { tryConnect(); };
+        pc.oniceconnectionstatechange = function() { console.log('ICE state:', pc.iceConnectionState, 'signal:', pc.signalingState); tryConnect(); };
         var channel = pc.createDataChannel('transfer');
         setupDC(channel);
 
         var offer = await pc.createOffer();
+        console.log('Before setLocal, signal:', pc.signalingState);
         // Override with short credentials derived from the 4-char code
         offer.sdp = applyCodeToSdp(offer.sdp, code, 'host');
         await pc.setLocalDescription(offer);
+        console.log('After setLocal, signal:', pc.signalingState);
         await waitForIceGathering(pc);
+        console.log('After ICE gather, signal:', pc.signalingState);
 
         saveMySdp(pc.localDescription.sdp);
 
@@ -323,8 +330,10 @@ function showQuickJoin() {
 
 // Joiner: enter host's 4-char code → reconstruct offer → create answer → show reply code
 async function submitQuickCode() {
+    if (quickConnecting) return;
     var code = $('quick-join-input').value.trim().toLowerCase();
     if (!code || code.length !== 4) { alert('Enter the 4-character code'); return; }
+    quickConnecting = true;
     $('quick-join-status').textContent = 'Connecting...';
 
     try {
@@ -365,16 +374,22 @@ async function submitQuickCode() {
 
         var qrData = JSON.stringify({ type: 'quick-answer', c: myCode });
         renderQR('qrcode-quick-answer', qrData);
+        quickConnecting = false;
     } catch (err) {
         console.error('Quick join error:', err);
         $('quick-join-status').textContent = 'Error: ' + err.message;
+        quickConnecting = false;
     }
 }
 
+var quickConnecting = false;
+
 // Host: enter joiner's reply code → reconstruct answer → connected!
 async function completeQuickConnect(replyCode) {
+    if (quickConnecting) return;
     replyCode = replyCode.trim().toLowerCase();
     if (!replyCode || replyCode.length !== 4) { alert('Enter the 4-character reply code'); return; }
+    quickConnecting = true;
     try {
         var hostCode = localStorage.getItem('qs_host_code') || '';
 
@@ -389,13 +404,16 @@ async function completeQuickConnect(replyCode) {
 
         // Reconstruct answer SDP from peer's cached answer template + reply code
         var answerSdp = applyCodeToSdp(peer.lastSdp, replyCode, 'join');
+        console.log('completeQuickConnect signal:', pc.signalingState, 'pc:', !!pc, 'hostCode:', hostCode, 'reply:', replyCode);
 
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
         $('quick-status').textContent = 'Connected!';
+        quickConnecting = false;
         setTimeout(function() { tryConnect(); }, 500);
     } catch (err) {
         console.error('Complete connect error:', err);
         $('quick-status').textContent = 'Error: ' + err.message;
+        quickConnecting = false;
     }
 }
 
@@ -870,6 +888,7 @@ function disconnect() {
     if (qrHost) { qrHost.clear(); qrHost = null; }
     if (qrAnswer) { qrAnswer.clear(); qrAnswer = null; }
     stopCamera();
+    quickConnecting = false;
     $('progress-section').classList.add('hidden');
     $('file-input').value = '';
     showScreen('home');
