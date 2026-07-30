@@ -232,46 +232,52 @@ function quickConnect(peerId) {
 }
 
 // ===================== QUICK RECONNECT =====================
+// Uses 4-character alphanumeric codes. The code IS the ice-ufrag.
+// ice-pwd is derived from the code + a simple hash.
 
-// Compact delta format: base64-ish session ID + ufrag + pwd
-// Full SDP is reconstructed from cached template + delta on the other side
-
-function extractSdpDelta(sdp) {
-    var m = {};
-    var o = sdp.match(/^o=.*$/m);
-    if (o) m.o = o[0].substring(2);
-    var u = sdp.match(/^a=ice-ufrag:(\S+)$/m);
-    if (u) m.u = u[1];
-    var p = sdp.match(/^a=ice-pwd:(\S+)$/m);
-    if (p) m.p = p[1];
-    return m;
-}
-
-function applySdpDelta(sdp, delta) {
-    var r = sdp;
-    if (delta.o) r = r.replace(/^o=.*$/m, 'o=' + delta.o);
-    if (delta.u) r = r.replace(/^a=ice-ufrag:\S+$/m, 'a=ice-ufrag:' + delta.u);
-    if (delta.p) r = r.replace(/^a=ice-pwd:\S+$/m, 'a=ice-pwd:' + delta.p);
+function makeSessionCode() {
+    var c = 'abcdefghjkmnpqrstuvwxyz23456789'; // no i,o,0,1 for readability
+    var r = '';
+    for (var i = 0; i < 4; i++) r += c[Math.floor(Math.random() * c.length)];
     return r;
 }
 
-// Quick reconnect: show a TINY QR code + text code instead of full SDP QR
+function derivePwd(code, salt) {
+    var s = code + salt;
+    var h = 0;
+    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+    return code + Math.abs(h).toString(36).substr(0, 4);
+}
+
+function applyCodeToSdp(sdp, code, salt) {
+    var u = code;
+    var p = derivePwd(code, salt);
+    var r = sdp.replace(/^a=ice-ufrag:\S+$/m, 'a=ice-ufrag:' + u);
+    r = r.replace(/^a=ice-pwd:\S+$/m, 'a=ice-pwd:' + p);
+    return r;
+}
+
+// Host: generate 4-char code, create offer with short credentials, show code
 async function startQuickHost(peerId) {
     console.log('startQuickHost for', peerId);
     if (!window.RTCPeerConnection) { alert('WebRTC not supported.'); return; }
     isHost = true;
     autoConnected = false;
     showScreen('quick-host');
-    $('quick-status').textContent = 'Generating connection code...';
+    $('quick-status').textContent = 'Generating...';
 
     try {
         var peers = getPeers();
         var peer = null;
         for (var i = 0; i < peers.length; i++) { if (peers[i].id === peerId) { peer = peers[i]; break; } }
         if (!peer || !peer.lastSdp) {
-            $('quick-status').textContent = 'No saved connection data. Use QR pairing first.';
+            $('quick-status').textContent = 'Pair via QR first.';
             return;
         }
+
+        var code = makeSessionCode();
+        localStorage.setItem('qs_host_code', code);
+        localStorage.setItem('qs_quick_peer', peerId);
 
         pc = new RTCPeerConnection(CONFIG);
         pc.oniceconnectionstatechange = function() { tryConnect(); };
@@ -279,66 +285,54 @@ async function startQuickHost(peerId) {
         setupDC(channel);
 
         var offer = await pc.createOffer();
+        // Override with short credentials derived from the 4-char code
+        offer.sdp = applyCodeToSdp(offer.sdp, code, 'host');
         await pc.setLocalDescription(offer);
         await waitForIceGathering(pc);
 
-        var freshSdp = pc.localDescription.sdp;
-        var delta = extractSdpDelta(freshSdp);
+        saveMySdp(pc.localDescription.sdp);
 
-        // Encode delta as a compact JSON string for the QR
-        var codeData = JSON.stringify({ type: 'quick', d: peerId, o: delta.o, u: delta.u, p: delta.p });
-        $('quick-code-data').textContent = codeData;
-        renderQR('qrcode-quick', codeData);
-
-        // Show peer prefix so the joiner knows which device to match
-        var peerPrefix = peerId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 4);
-        var textCode = peerPrefix + '-' + delta.u + '-' + delta.p;
-        $('quick-code-text').textContent = textCode;
+        // Show the 4-char code prominently
+        $('quick-code-text').textContent = code;
         $('quick-code-text').className = '';
-        $('quick-code-text').title = 'Prefix: ' + peer.name;
-
-        localStorage.setItem('qs_quick_peer', peerId);
         $('quick-status').textContent = 'Share this code with ' + peer.name;
-        saveMySdp(freshSdp);
+
+        // Also show a tiny QR containing the delta (for camera scanning)
+        var qrData = JSON.stringify({ type: 'quick', c: code });
+        renderQR('qrcode-quick', qrData);
     } catch (err) {
         console.error('Quick host error:', err);
         $('quick-status').textContent = 'Error: ' + err.message;
     }
 }
 
-// Show the quick join screen (enter code from host)
 function showQuickJoin() {
     showScreen('quick-join');
-    $('quick-join-status').textContent = 'Enter the code shown on the other device';
+    $('quick-join-status').textContent = 'Enter the 4-character code';
     $('quick-join-input').value = '';
+    $('quick-join-input').style.display = 'block';
+    $('quick-join-submit').style.display = 'block';
+    $('quick-join-result').style.display = 'none';
+    $('qrcode-quick-answer').innerHTML = '';
     $('quick-join-input').focus();
 }
 
+// Joiner: enter host's 4-char code → reconstruct offer → create answer → show reply code
 async function submitQuickCode() {
-    var code = $('quick-join-input').value.trim();
-    if (!code) return;
+    var code = $('quick-join-input').value.trim().toLowerCase();
+    if (!code || code.length !== 4) { alert('Enter the 4-character code'); return; }
     $('quick-join-status').textContent = 'Connecting...';
 
     try {
-        // Code format: prefix-ufrag-pwd (prefix identifies the peer)
-        var parts = code.split('-');
-        if (parts.length < 3) { throw new Error('Invalid code format. Expected: prefix-ufrag-pwd'); }
-        var peerPrefix = parts[0];
-        var hostUfrag = parts[1];
-        var hostPwd = parts.slice(2).join('-');
-
-        // Find peer matching the prefix
         var peers = getPeers();
         var peer = null;
         for (var i = 0; i < peers.length; i++) {
-            var pfx = peers[i].id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 4);
-            if (pfx === peerPrefix && peers[i].lastSdp) { peer = peers[i]; break; }
+            if (peers[i].lastSdp) { peer = peers[i]; break; }
         }
-        if (!peer || !peer.lastSdp) { throw new Error('Unknown device code. QR pair first.'); }
+        if (!peer || !peer.lastSdp) { throw new Error('No saved peers. QR pair first.'); }
 
-        // Reconstruct host's SDP from cached template + entered code
-        var cachedHostSdp = peer.lastSdp;
-        var hostSdp = applySdpDelta(cachedHostSdp, { u: hostUfrag, p: hostPwd });
+        // Reconstruct host's offer from cached SDP + short code
+        var hostSdp = applyCodeToSdp(peer.lastSdp, code, 'host');
 
         isHost = false;
         autoConnected = false;
@@ -348,61 +342,49 @@ async function submitQuickCode() {
 
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: hostSdp }));
         var answer = await pc.createAnswer();
+
+        // Generate our own short code for the reply
+        var myCode = makeSessionCode();
+        answer.sdp = applyCodeToSdp(answer.sdp, myCode, 'join');
         await pc.setLocalDescription(answer);
         await waitForIceGathering(pc);
 
-        var freshAnswerSdp = pc.localDescription.sdp;
-        var answerDelta = extractSdpDelta(freshAnswerSdp);
+        saveMySdp(pc.localDescription.sdp);
+        localStorage.setItem('qs_join_code', myCode);
 
-        // Show the answer code for the host to type back
-        var myPrefix = getDeviceId().replace(/[^a-zA-Z0-9]/g, '').substring(0, 4);
-        var answerCode = myPrefix + '-' + answerDelta.u + '-' + answerDelta.p;
+        // Show the reply code
         $('quick-join-status').textContent = 'Enter this code on ' + peer.name;
-        $('quick-join-result').textContent = answerCode;
+        $('quick-join-result').textContent = myCode;
         $('quick-join-result').style.display = 'block';
         $('quick-join-input').style.display = 'none';
         $('quick-join-submit').style.display = 'none';
 
-        saveMySdp(freshAnswerSdp);
-
-        // Also show QR in case they want to scan instead
-        var answerData = JSON.stringify({ type: 'quick-answer', o: answerDelta.o, u: answerDelta.u, p: answerDelta.p });
-        renderQR('qrcode-quick-answer', answerData);
-
-        // Poll for connection (host should be entering our code now)
-        // The host will use our answer code to reconstruct our answer SDP
-        // We need to set up a way for the host to pass us their answer data
-        // For now, the host types back and we auto-detect
-
-        // Relisten for the host's final connection attempt
-        // The host will scan/enter our answer code and call completeQuickConnect
+        var qrData = JSON.stringify({ type: 'quick-answer', c: myCode });
+        renderQR('qrcode-quick-answer', qrData);
     } catch (err) {
         console.error('Quick join error:', err);
         $('quick-join-status').textContent = 'Error: ' + err.message;
     }
 }
 
-// Called by the host after seeing the answer code from the joiner
-async function completeQuickConnect(answerCode) {
+// Host: enter joiner's reply code → reconstruct answer → connected!
+async function completeQuickConnect(replyCode) {
+    replyCode = replyCode.trim().toLowerCase();
+    if (!replyCode || replyCode.length !== 4) { alert('Enter the 4-character reply code'); return; }
     try {
-        var parts = answerCode.split('-');
-        if (parts.length < 3) { throw new Error('Invalid code format'); }
-        var joinerPrefix = parts[0];
-        var answerUfrag = parts[1];
-        var answerPwd = parts.slice(2).join('-');
+        var hostCode = localStorage.getItem('qs_host_code') || '';
 
-        // Find the peer by matching the joiner's prefix
+        // Find the peer to get their cached answer SDP template
         var peerId = localStorage.getItem('qs_quick_peer') || '';
         var peers = getPeers();
         var peer = null;
         for (var i = 0; i < peers.length; i++) {
-            var pfx = peers[i].id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 4);
-            if (pfx === joinerPrefix && peers[i].lastSdp) { peer = peers[i]; break; }
+            if (peers[i].id === peerId && peers[i].lastSdp) { peer = peers[i]; break; }
         }
-        if (!peer || !peer.lastSdp) throw new Error('No saved connection data for this peer');
+        if (!peer || !peer.lastSdp) throw new Error('No saved data');
 
-        // Reconstruct answer SDP from joiner's cached answer template + fresh ufrag/pwd
-        var answerSdp = applySdpDelta(peer.lastSdp, { u: answerUfrag, p: answerPwd });
+        // Reconstruct answer SDP from peer's cached answer template + reply code
+        var answerSdp = applyCodeToSdp(peer.lastSdp, replyCode, 'join');
 
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
         $('quick-status').textContent = 'Connected!';
@@ -413,21 +395,22 @@ async function completeQuickConnect(answerCode) {
     }
 }
 
-// Handle scanned quick-reconnect QR (joiner scans host's tiny QR)
+// Handle scanned quick-reconnect QR
 async function handleQuickScan(data) {
     stopCamera();
     showScreen('connecting');
     $('connect-status').textContent = 'Quick connecting...';
     try {
+        var code = data.c;
         var peers = getPeers();
         var peer = null;
         for (var i = 0; i < peers.length; i++) {
-            if (peers[i].id === data.d && peers[i].lastSdp) { peer = peers[i]; break; }
+            if (peers[i].lastSdp) { peer = peers[i]; break; }
         }
-        if (!peer || !peer.lastSdp) throw new Error('Unknown peer. Pair via QR first.');
+        if (!peer || !peer.lastSdp) throw new Error('Pair via QR first.');
 
-        // Reconstruct host's offer SDP from cached template + scanned delta
-        var hostSdp = applySdpDelta(peer.lastSdp, { o: data.o, u: data.u, p: data.p });
+        var hostSdp = applyCodeToSdp(peer.lastSdp, code, 'host');
+        localStorage.setItem('qs_host_code', code);
 
         isHost = false;
         autoConnected = false;
@@ -437,46 +420,42 @@ async function handleQuickScan(data) {
 
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: hostSdp }));
         var answer = await pc.createAnswer();
+        var myCode = makeSessionCode();
+        answer.sdp = applyCodeToSdp(answer.sdp, myCode, 'join');
         await pc.setLocalDescription(answer);
         await waitForIceGathering(pc);
 
-        var answerDelta = extractSdpDelta(pc.localDescription.sdp);
         saveMySdp(pc.localDescription.sdp);
+        localStorage.setItem('qs_join_code', myCode);
 
-        // Show answer code for host to enter
-        var answerCode = answerDelta.u + '-' + answerDelta.p;
         showScreen('quick-join');
         $('quick-join-status').textContent = 'Enter this code on the host device';
-        $('quick-join-result').textContent = answerCode;
+        $('quick-join-result').textContent = myCode;
         $('quick-join-result').style.display = 'block';
         $('quick-join-input').style.display = 'none';
         $('quick-join-submit').style.display = 'none';
 
-        // Also show tiny answer QR
-        var answerQR = JSON.stringify({ type: 'quick-answer', o: answerDelta.o, u: answerDelta.u, p: answerDelta.p });
-        renderQR('qrcode-quick-answer', answerQR);
-
-        // Auto-scan fallback: after showing the code, wait for the host to enter it
-        console.log('Quick join answer ready, code:', answerCode);
+        var qrData = JSON.stringify({ type: 'quick-answer', c: myCode });
+        renderQR('qrcode-quick-answer', qrData);
     } catch (err) {
         console.error('Quick scan error:', err);
         $('connect-status').textContent = 'Error: ' + err.message;
     }
 }
 
-// Handle scanned quick-answer QR (host scans joiner's tiny reply QR)
 async function handleQuickAnswerScan(data) {
     stopCamera();
     try {
+        var replyCode = data.c;
         var peerId = localStorage.getItem('qs_quick_peer') || '';
         var peers = getPeers();
         var peer = null;
         for (var i = 0; i < peers.length; i++) {
             if (peers[i].id === peerId && peers[i].lastSdp) { peer = peers[i]; break; }
         }
-        if (!peer || !peer.lastSdp) throw new Error('No saved data');
+        if (!peer || !peer.lastSdp) return;
 
-        var answerSdp = applySdpDelta(peer.lastSdp, { o: data.o, u: data.u, p: data.p });
+        var answerSdp = applyCodeToSdp(peer.lastSdp, replyCode, 'join');
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
         $('quick-status').textContent = 'Connected!';
         setTimeout(function() { tryConnect(); }, 500);
@@ -485,12 +464,11 @@ async function handleQuickAnswerScan(data) {
     }
 }
 
-// Host enters joiner's code
 function showQuickHostEntry() {
     showScreen('quick-host-entry');
     $('quick-host-entry-input').value = '';
     $('quick-host-entry-input').focus();
-    $('quick-host-entry-status').textContent = 'Enter the code from the other device';
+    $('quick-host-entry-status').textContent = 'Enter the 4-character code';
 }
 
 async function startHosting() {

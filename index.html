@@ -143,35 +143,34 @@ header p{color:var(--text-muted);font-size:.9rem}
 <div style="margin:20px;font-size:3rem;animation:pulse 1s infinite">⟳</div>
 </div>
 
-<!-- QUICK HOST (reconnect with tiny QR) -->
+<!-- QUICK HOST (reconnect with short code) -->
 <div id="screen-quick-host" class="screen">
 <h2>Quick Connect</h2>
 <p class="status" id="quick-status">Generating...</p>
-<div class="qr-wrap" id="qrcode-quick"></div>
-<p style="font-size:.9rem;color:var(--text-muted);margin:4px 0">Or type this code:</p>
-<div id="quick-code-text" style="font-size:1.5rem;font-weight:700;color:var(--primary);letter-spacing:4px;text-align:center;padding:12px;background:var(--surface);border-radius:12px;border:1px solid var(--border);width:100%;max-width:360px;word-break:break-all"></div>
-<div style="display:none" id="quick-code-data"></div>
-<button id="btn-quick-host-entry" class="btn btn-primary" onclick="showQuickHostEntry()" style="margin-top:12px">⌨️ Enter Reply Code</button>
-<button class="btn btn-text" onclick="showScreen('home')">Cancel</button>
+<div id="quick-code-text" style="font-size:4rem;font-weight:700;color:var(--primary);letter-spacing:12px;text-align:center;padding:24px;background:var(--surface);border-radius:16px;border:2px solid var(--border);width:100%;max-width:300px;font-family:monospace">----</div>
+<p style="font-size:.85rem;color:var(--text-muted);margin:4px 0">Enter this code on the other device</p>
+<div class="qr-wrap" id="qrcode-quick" style="margin-top:4px;padding:8px"></div>
+<button class="btn btn-primary" onclick="showQuickHostEntry()">⌨️ Enter Reply Code</button>
+<button class="btn btn-text" onclick="disconnect();showScreen('home')">Cancel</button>
 </div>
 
 <!-- QUICK JOIN (enter host's code) -->
 <div id="screen-quick-join" class="screen">
-<h2>Enter Connection Code</h2>
-<p class="status" id="quick-join-status">Enter the code from the other device</p>
-<input id="quick-join-input" type="text" style="width:100%;max-width:360px;padding:16px;font-size:1.3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Paste the code from the other device">
-<button id="quick-join-submit" class="btn btn-primary">Connect</button>
+<h2>Enter Code</h2>
+<p class="status" id="quick-join-status">Enter the 4-character code</p>
+    <input id="quick-join-input" type="text" maxlength="4" style="width:100%;max-width:240px;padding:20px;font-size:3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none;font-family:monospace;text-transform:lowercase" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="abcd" oninput="var v=this.value.toLowerCase();if(v.length===4)submitQuickCode()">
+<button id="quick-join-submit" class="btn btn-primary" onclick="submitQuickCode()">Connect</button>
 <div class="qr-wrap" id="qrcode-quick-answer" style="margin-top:12px"></div>
-<div id="quick-join-result" style="font-size:1.5rem;font-weight:700;color:var(--accent);letter-spacing:4px;text-align:center;padding:12px;background:var(--surface);border-radius:12px;border:1px solid var(--border);width:100%;max-width:360px;word-break:break-all;display:none"></div>
+<div id="quick-join-result" style="font-size:4rem;font-weight:700;color:var(--accent);letter-spacing:12px;text-align:center;padding:24px;background:var(--surface);border-radius:16px;border:2px solid var(--border);width:100%;max-width:300px;font-family:monospace;display:none"></div>
 <button class="btn btn-text" onclick="showScreen('home')">Cancel</button>
 </div>
 
 <!-- QUICK HOST ENTRY (host types joiner's code back) -->
 <div id="screen-quick-host-entry" class="screen">
 <h2>Enter Reply Code</h2>
-<p class="status" id="quick-host-entry-status">Type the code shown on the other device</p>
-<input id="quick-host-entry-input" type="text" style="width:100%;max-width:360px;padding:16px;font-size:1.3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Paste the reply code from the other device">
-<button id="quick-host-entry-submit" class="btn btn-primary">Connect</button>
+<p class="status" id="quick-host-entry-status">Type the 4-character code from the other device</p>
+<input id="quick-host-entry-input" type="text" maxlength="4" style="width:100%;max-width:240px;padding:20px;font-size:3rem;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;outline:none;font-family:monospace;text-transform:lowercase" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="abcd" oninput="var v=this.value.toLowerCase();if(v.length===4)completeQuickConnect(v)">
+<button id="quick-host-entry-submit" class="btn btn-primary" onclick="completeQuickConnect($('quick-host-entry-input').value)">Connect</button>
 <button class="btn btn-text" onclick="showScreen('quick-host')">Back</button>
 </div>
 </div>
