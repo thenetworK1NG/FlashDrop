@@ -64,6 +64,14 @@ function formatSize(bytes) {
     return (bytes / 1073741824).toFixed(2) + ' GB';
 }
 
+function playSound(name) {
+    try {
+        var a = new Audio('sound/' + name + '.mp3');
+        a.volume = 0.6;
+        a.play().catch(function() {});
+    } catch (e) {}
+}
+
 // ===================== QR CODE RENDERING =====================
 
 function renderQR(elementId, text) {
@@ -139,6 +147,7 @@ function tryConnect() {
     if (!pc || (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed')) return;
     if (autoConnected) return;
     autoConnected = true;
+    playSound('granted');
     showScreen('connected');
 }
 
@@ -265,6 +274,7 @@ function startScanLoop() {
 
 async function handleScan(data) {
     stopCamera();
+    playSound('scan');
 
     if (data.t === 'o' && !isHost) {
         showScreen('connecting');
@@ -361,6 +371,8 @@ async function sendFiles() {
     for (const file of files) {
         await sendSingleFile(file);
     }
+    dc.send(JSON.stringify({ type: 'transfer-complete' }));
+    playSound('sent');
 }
 
 // ===================== ADAPTIVE STREAMING ENGINE =====================
@@ -428,6 +440,9 @@ function handleMsg(data) {
         try {
             const msg = JSON.parse(data);
             switch (msg.type) {
+                case 'transfer-complete':
+                    playSound('sent');
+                    break;
                 case 'file-start':
                     recvBuffer = {
                         fileId: msg.fileId, name: msg.name, size: msg.size,
