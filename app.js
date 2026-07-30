@@ -25,6 +25,9 @@ var qrAnswer = null;
 var recvBuffer = null;
 var autoConnected = false;
 
+// Speed tracking
+var speedData = { startTime: 0, lastBytes: 0, lastTime: 0, currentSpeed: 0, totalBytes: 0, direction: '' };
+
 function $(id) { return document.getElementById(id); }
 
 function showScreen(id) {
@@ -59,6 +62,66 @@ function formatSize(bytes) {
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
     if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
     return (bytes / 1073741824).toFixed(2) + ' GB';
+}
+
+// ===================== DEVICE ID & PEER STORAGE =====================
+
+function getDeviceId() {
+    var id = localStorage.getItem('qs_device_id');
+    if (!id) {
+        id = 'dev_' + Math.random().toString(36).substr(2, 8) + '_' + Date.now().toString(36);
+        localStorage.setItem('qs_device_id', id);
+    }
+    return id;
+}
+
+function getDeviceName() {
+    var name = localStorage.getItem('qs_device_name');
+    if (!name) {
+        name = 'My ' + (/Android/.test(navigator.userAgent) ? 'Phone' : /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : 'Device');
+        localStorage.setItem('qs_device_name', name);
+    }
+    return name;
+}
+
+function getPeers() {
+    try { return JSON.parse(localStorage.getItem('qs_peers') || '[]'); } catch(_) { return []; }
+}
+
+function savePeer(id, name) {
+    var peers = getPeers();
+    var existing = false;
+    for (var i = 0; i < peers.length; i++) {
+        if (peers[i].id === id) {
+            peers[i].name = name;
+            peers[i].lastSeen = Date.now();
+            existing = true;
+            break;
+        }
+    }
+    if (!existing) peers.push({ id: id, name: name, lastSeen: Date.now() });
+    localStorage.setItem('qs_peers', JSON.stringify(peers));
+}
+
+function renderKnownPeers() {
+    var container = $('known-peers');
+    if (!container) return;
+    var peers = getPeers();
+    if (peers.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    var html = '<div style="width:100%;max-width:400px;margin-top:8px"><h3 style="font-size:.9rem;color:var(--text-muted);margin-bottom:8px">📌 Known Devices</h3>';
+    for (var i = 0; i < peers.length; i++) {
+        var p = peers[i];
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="quickConnect(\'' + escHtml(p.id) + '\')">';
+        html += '<span style="font-size:1.2rem">📱</span>';
+        html += '<span style="flex:1;font-size:.9rem">' + escHtml(p.name) + '</span>';
+        html += '<span style="font-size:.75rem;color:var(--primary)">Quick Share</span>';
+        html += '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 // ===================== QR CODE RENDERING =====================
@@ -137,6 +200,16 @@ function tryConnect() {
     if (autoConnected) return;
     autoConnected = true;
     showScreen('connected');
+
+    // Exchange device info to remember this peer
+    try {
+        dc.send(JSON.stringify({ type: 'device-info', id: getDeviceId(), name: getDeviceName() }));
+    } catch(_) {}
+}
+
+function quickConnect(peerId) {
+    localStorage.setItem('qs_target_peer', peerId);
+    startHosting();
 }
 
 async function startHosting() {
@@ -350,8 +423,8 @@ async function sendFiles() {
 }
 
 async function sendSingleFile(file) {
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    const fileId = Date.now() + '-' + Math.random().toString(36).substr(2, 6);
+    var totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    var fileId = Date.now() + '-' + Math.random().toString(36).substr(2, 6);
 
     dc.send(JSON.stringify({
         type: 'file-start', fileId,
@@ -361,23 +434,32 @@ async function sendSingleFile(file) {
     }));
 
     $('progress-label').textContent = 'Sending ' + file.name;
-    updateProgress(0);
+    speedData = { startTime: Date.now(), lastBytes: 0, lastTime: Date.now(), currentSpeed: 0, totalBytes: file.size, direction: '⬆' };
+    updateProgress(0, file.size);
 
-    let offset = 0;
-    for (let i = 0; i < totalChunks; i++) {
-        const end = Math.min(offset + CHUNK_SIZE, file.size);
-        const blob = file.slice(offset, end);
-        const buf = await blob.arrayBuffer();
+    var offset = 0;
+    for (var i = 0; i < totalChunks; i++) {
+        var end = Math.min(offset + CHUNK_SIZE, file.size);
+        var blob = file.slice(offset, end);
+        var buf = await blob.arrayBuffer();
         dc.send(buf);
         offset = end;
-        updateProgress((i + 1) / totalChunks);
 
-        if (i % 8 === 0) await new Promise(r => setTimeout(r, 0));
+        var now = Date.now();
+        if (now - speedData.lastTime > 500) {
+            speedData.currentSpeed = (offset - speedData.lastBytes) / ((now - speedData.lastTime) / 1000);
+            speedData.lastBytes = offset;
+            speedData.lastTime = now;
+        }
+
+        updateProgress(offset, file.size);
+
+        if (i % 8 === 0) await new Promise(function(r) { setTimeout(r, 0); });
     }
 
     dc.send(JSON.stringify({ type: 'file-end', fileId, name: file.name }));
     $('progress-label').textContent = 'Sent: ' + file.name;
-    updateProgress(1);
+    updateProgress(file.size, file.size);
 }
 
 function handleMsg(data) {
@@ -392,7 +474,16 @@ function handleMsg(data) {
                     };
                     $('progress-section').classList.remove('hidden');
                     $('progress-label').textContent = 'Receiving ' + msg.name;
-                    updateProgress(0);
+                    speedData = { startTime: Date.now(), lastBytes: 0, lastTime: Date.now(), currentSpeed: 0, totalBytes: msg.size, direction: '⬇' };
+                    updateProgress(0, msg.size);
+                    break;
+                case 'device-info':
+                    savePeer(msg.id, msg.name);
+                    renderKnownPeers();
+                    if ($('conn-peer-name')) $('conn-peer-name').textContent = msg.name;
+                    if ($('host-status')) $('host-status').textContent = 'Connected to ' + msg.name;
+                    if ($('answer-status')) $('answer-status').textContent = 'Connected to ' + msg.name;
+                    try { dc.send(JSON.stringify({ type: 'device-info', id: getDeviceId(), name: getDeviceName() })); } catch(_) {}
                     break;
                 case 'file-end':
                     if (recvBuffer) {
@@ -400,7 +491,7 @@ function handleMsg(data) {
                         dlBlob(blob, recvBuffer.name);
                         addReceived(recvBuffer.name, recvBuffer.size);
                         $('progress-label').textContent = 'Received: ' + recvBuffer.name;
-                        updateProgress(1);
+                        updateProgress(recvBuffer.size, recvBuffer.size);
                         setTimeout(() => { $('progress-section').classList.add('hidden'); }, 2000);
                         recvBuffer = null;
                     }
@@ -411,7 +502,15 @@ function handleMsg(data) {
         if (recvBuffer) {
             recvBuffer.chunks.push(data);
             recvBuffer.received += data.byteLength;
-            updateProgress(recvBuffer.received / recvBuffer.size);
+
+            var now = Date.now();
+            if (now - speedData.lastTime > 500) {
+                speedData.currentSpeed = (recvBuffer.received - speedData.lastBytes) / ((now - speedData.lastTime) / 1000);
+                speedData.lastBytes = recvBuffer.received;
+                speedData.lastTime = now;
+            }
+
+            updateProgress(recvBuffer.received, recvBuffer.size);
         }
     }
 }
@@ -438,10 +537,38 @@ function addReceived(name, size) {
     container.prepend(div);
 }
 
-function updateProgress(fraction) {
-    const pct = Math.min(100, Math.round(fraction * 100));
+function updateProgress(done, total) {
+    if (typeof total === 'undefined') { total = 1; }
+    if (typeof done === 'undefined') { done = 1; }
+    if (total === 0) total = 1;
+    var fraction = done / total;
+    var pct = Math.min(100, Math.round(fraction * 100));
     $('progress-fill').style.width = pct + '%';
-    $('progress-text').textContent = pct + '%';
+
+    var elapsed = (Date.now() - speedData.startTime) / 1000;
+    var speed = speedData.currentSpeed;
+    var eta = '';
+    if (speed > 0 && fraction < 1) {
+        var etaSec = Math.round((total - done) / speed);
+        if (etaSec < 60) eta = etaSec + 's';
+        else eta = Math.floor(etaSec / 60) + 'm ' + (etaSec % 60) + 's';
+    }
+
+    var speedStr = speed > 0 ? formatSize(speed) + '/s' : '--';
+    var elapsedStr = '';
+    if (elapsed < 60) elapsedStr = Math.round(elapsed) + 's';
+    else elapsedStr = Math.floor(elapsed / 60) + 'm ' + Math.round(elapsed % 60) + 's';
+
+    var html = '<div style="display:flex;justify-content:space-between;font-size:.8rem;color:var(--text-muted);margin-top:4px">';
+    html += '<span>' + speedData.direction + ' ' + formatSize(done) + ' / ' + formatSize(total) + '</span>';
+    html += '<span>' + speedStr + '</span>';
+    html += '</div>';
+    html += '<div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--text-muted);margin-top:2px">';
+    html += '<span>' + elapsedStr + ' elapsed</span>';
+    if (eta) html += '<span>' + eta + ' remaining</span>';
+    html += '</div>';
+
+    $('progress-text').innerHTML = html;
 }
 
 function disconnect() {
@@ -481,6 +608,7 @@ function init() {
         }
     });
     $('btn-disconnect').addEventListener('click', disconnect);
+    renderKnownPeers();
     console.log('QuickShare initialized successfully');
 }
 
@@ -497,6 +625,7 @@ if (document.readyState === 'loading') {
 // Explicitly expose entry points for inline onclick
 window.startHosting = startHosting;
 window.startJoining = startJoining;
+window.quickConnect = quickConnect;
 window.selectFiles = selectFiles;
 window.sendFiles = sendFiles;
 window.disconnect = disconnect;
