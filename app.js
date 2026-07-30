@@ -9,9 +9,11 @@ var CONFIG = {
         { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
-var CHUNK_SIZE = 16384;
+var CHUNK_SIZE = 65536;
 var SCAN_DELAY = 500;
-var ICE_TIMEOUT = 1000; // 1s timeout for ICE gathering (shorter → smaller SDP → less dense QR)
+var ICE_TIMEOUT = 1000;
+var BUF_HIGH = 4194304; // 4MB — pause sending when buffer exceeds this
+var BUF_LOW = 262144;   // 256KB — resume when buffer drops below this
 
 var state = 'home';
 var pc = null;
@@ -422,39 +424,59 @@ async function sendFiles() {
     setTimeout(() => { $('progress-section').classList.add('hidden'); }, 2000);
 }
 
+function readChunk(file, offset) {
+    var end = Math.min(offset + CHUNK_SIZE, file.size);
+    return file.slice(offset, end).arrayBuffer();
+}
+
 async function sendSingleFile(file) {
-    var totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     var fileId = Date.now() + '-' + Math.random().toString(36).substr(2, 6);
 
     dc.send(JSON.stringify({
         type: 'file-start', fileId,
         name: file.name, size: file.size,
         mimeType: file.type || 'application/octet-stream',
-        totalChunks
+        totalChunks: Math.ceil(file.size / CHUNK_SIZE)
     }));
 
     $('progress-label').textContent = 'Sending ' + file.name;
     speedData = { startTime: Date.now(), lastBytes: 0, lastTime: Date.now(), currentSpeed: 0, totalBytes: file.size, direction: '⬆' };
     updateProgress(0, file.size);
 
+    // Kick off first read
+    var nextRead = readChunk(file, 0);
     var offset = 0;
-    for (var i = 0; i < totalChunks; i++) {
-        var end = Math.min(offset + CHUNK_SIZE, file.size);
-        var blob = file.slice(offset, end);
-        var buf = await blob.arrayBuffer();
-        dc.send(buf);
-        offset = end;
 
+    while (offset < file.size) {
+        var buf = await nextRead;
+        offset = Math.min(offset + CHUNK_SIZE, file.size);
+
+        // Start reading next chunk while we send this one
+        nextRead = offset < file.size ? readChunk(file, offset) : null;
+
+        // Backpressure: pause if WebRTC send buffer is too full
+        if (dc.bufferedAmount > BUF_HIGH) {
+            dc.bufferedAmountLowThreshold = BUF_LOW;
+            if (dc.bufferedAmount > BUF_LOW) {
+                await new Promise(function(resolve) {
+                    dc.onbufferedamountlow = function() {
+                        dc.onbufferedamountlow = null;
+                        resolve();
+                    };
+                });
+            }
+        }
+
+        dc.send(buf);
+
+        // Speed tracking (every ~500ms)
         var now = Date.now();
         if (now - speedData.lastTime > 500) {
             speedData.currentSpeed = (offset - speedData.lastBytes) / ((now - speedData.lastTime) / 1000);
             speedData.lastBytes = offset;
             speedData.lastTime = now;
         }
-
         updateProgress(offset, file.size);
-
-        if (i % 8 === 0) await new Promise(function(r) { setTimeout(r, 0); });
     }
 
     dc.send(JSON.stringify({ type: 'file-end', fileId, name: file.name }));
