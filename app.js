@@ -263,7 +263,6 @@ async function startQuickHost(peerId) {
     autoConnected = false;
     showScreen('quick-host');
     $('quick-status').textContent = 'Generating connection code...';
-    $('quick-code').textContent = '';
 
     try {
         var peers = getPeers();
