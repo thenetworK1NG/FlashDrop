@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>QuickShare - P2P File Transfer</title>
+<meta name="description" content="Share files directly between devices, no server needed">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--surface:#161b22;--surface-hover:#1c2129;--border:#30363d;--text:#c9d1d9;--text-muted:#8b949e;--primary:#58a6ff;--primary-hover:#79c0ff;--accent:#3fb950;--error:#f85149}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
+#app{max-width:480px;margin:0 auto;padding:16px;padding-top:env(safe-area-inset-top,16px);padding-bottom:env(safe-area-inset-bottom,16px);min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+.screen{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:20px;animation:fadeIn .3s ease;width:100%}
+.screen.active{display:flex}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+header{text-align:center;padding:20px 0}
+header h1{font-size:1.8rem;font-weight:700;color:var(--primary)}
+header p{color:var(--text-muted);font-size:.9rem}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:16px 32px;border:none;border-radius:12px;font-size:1rem;font-weight:600;cursor:pointer;transition:all .2s;width:100%;max-width:320px;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-secondary{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--surface-hover)}
+.btn-accent{background:var(--accent);color:#fff}
+.btn-text{background:transparent;color:var(--text-muted);padding:12px}
+.btn-text:hover{color:var(--text)}
+.btn-small{background:transparent;border:none;color:var(--text-muted);cursor:pointer;padding:4px 8px;font-size:1rem}
+.hidden{display:none!important}
+.hero{text-align:center;padding:40px 0}
+.hero .icon{font-size:4rem;margin-bottom:16px}
+.hero h2{font-size:1.5rem;margin-bottom:8px}
+.hero p{color:var(--text-muted)}
+.actions{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;padding:20px 0}
+.qr-wrap{background:#fff;padding:16px;border-radius:16px;display:inline-flex}
+.qr-wrap canvas,.qr-wrap img{display:block;max-width:256px;height:auto}
+.camera-box{width:100%;max-width:360px;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3}
+.camera-box video{width:100%;height:100%;object-fit:cover}
+.status{color:var(--text-muted);text-align:center;font-size:.9rem}
+.file-list{width:100%;max-width:400px;display:flex;flex-direction:column;gap:8px}
+.file-item{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.file-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem}
+.file-item .size{color:var(--text-muted);font-size:.8rem;white-space:nowrap}
+.file-item .status{color:var(--accent);font-size:.8rem}
+.empty-state{color:var(--text-muted);text-align:center;padding:20px;font-size:.9rem;width:100%}
+.progress-box{width:100%;max-width:400px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
+.progress-box .label{font-size:.9rem;margin-bottom:8px;word-break:break-all}
+.progress-bar{width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;background:var(--primary);border-radius:4px;transition:width .3s ease;width:0%}
+.progress-text{text-align:right;font-size:.8rem;color:var(--text-muted);margin-top:4px}
+.send-section,.receive-section{width:100%;max-width:400px}
+.send-section h3,.receive-section h3{font-size:1rem;margin-bottom:12px;color:var(--text-muted)}
+.conn-status{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;width:100%;max-width:400px}
+.conn-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;font-size:.8rem;font-weight:700;flex-shrink:0}
+.step{display:flex;align-items:flex-start;gap:12px;width:100%;max-width:400px}
+.step p{flex:1;font-size:.9rem;color:var(--text-muted);line-height:1.4}
+@media(min-width:768px){#app{padding-top:32px}.btn{max-width:400px}}
+</style>
+</head>
+<body>
+<div id="app">
+<header><h1>QuickShare</h1><p>Peer-to-peer file sharing</p></header>
+
+<!-- HOME -->
+<div id="screen-home" class="screen active">
+<div class="hero">
+<div class="icon">⚡</div>
+<h2>Share Files Instantly</h2>
+<p>Direct device-to-device. No servers, no uploads.</p>
+</div>
+<div class="actions">
+<button id="btn-host" class="btn btn-primary">📤 Start Sharing</button>
+<button id="btn-join" class="btn btn-secondary">📥 Connect to Device</button>
+</div>
+</div>
+
+<!-- HOSTING -->
+<div id="screen-hosting" class="screen">
+<h2>Your Share Code</h2>
+<p class="status">Ask your friend to scan this QR code</p>
+<div class="qr-wrap" id="qrcode-host"></div>
+<p class="status" id="host-status">Generating...</p>
+<button id="btn-scan-answer" class="btn btn-primary hidden">📷 Scan Their Reply</button>
+<button id="btn-back-host" class="btn btn-text">Cancel</button>
+</div>
+
+<!-- SCANNING -->
+<div id="screen-scanning" class="screen">
+<h2>Scan QR Code</h2>
+<p class="status" id="scan-status">Point your camera at the QR code</p>
+<div class="camera-box"><video id="camera-view" autoplay playsinline muted></video></div>
+<button id="btn-cancel-scan" class="btn btn-text">Cancel</button>
+</div>
+
+<!-- SHOW ANSWER -->
+<div id="screen-show-answer" class="screen">
+<h2>Almost Connected!</h2>
+<p class="status">Show this code to the host device so they can scan it</p>
+<div class="qr-wrap" id="qrcode-answer"></div>
+<p class="status" id="answer-status">Waiting for host to scan...</p>
+</div>
+
+<!-- CONNECTED -->
+<div id="screen-connected" class="screen" style="justify-content:flex-start;padding-top:20px">
+<div class="conn-status"><span class="conn-dot"></span> Connected</div>
+
+<div class="send-section">
+<h3>📤 Send Files</h3>
+<input type="file" id="file-input" multiple hidden>
+<button id="btn-select-files" class="btn btn-secondary" style="max-width:100%;padding:12px">Select Files to Send</button>
+<div id="file-list" class="file-list"><p class="empty-state">No files selected</p></div>
+<button id="btn-send" class="btn btn-accent hidden" style="margin-top:8px">Send All</button>
+</div>
+
+<div class="receive-section" style="margin-top:20px">
+<h3>📥 Received Files</h3>
+<div id="received-files" class="file-list"><p class="empty-state">No files received yet</p></div>
+</div>
+
+<div id="progress-section" class="progress-box hidden">
+<div class="label" id="progress-label">Transferring...</div>
+<div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+<div class="progress-text" id="progress-text">0%</div>
+</div>
+
+<button id="btn-disconnect" class="btn btn-text" style="margin-top:auto;padding:20px">Disconnect</button>
+</div>
+
+<!-- CONNECTING (intermediate) -->
+<div id="screen-connecting" class="screen">
+<h2>Connecting...</h2>
+<p class="status" id="connect-status">Setting up secure connection</p>
+<div style="margin:20px;font-size:3rem;animation:pulse 1s infinite">⟳</div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
