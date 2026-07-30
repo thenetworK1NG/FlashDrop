@@ -11,7 +11,7 @@ var CONFIG = {
 };
 var CHUNK_SIZE = 16384;
 var SCAN_DELAY = 500;
-var ICE_TIMEOUT = 5000; // 5s timeout for ICE gathering
+var ICE_TIMEOUT = 1000; // 1s timeout for ICE gathering (shorter → smaller SDP → less dense QR)
 
 var state = 'home';
 var pc = null;
@@ -80,7 +80,7 @@ function renderQR(elementId, text) {
 
         var count = qr.getModuleCount();
         var margin = 2;
-        var cellSize = Math.max(2, Math.floor(240 / count));
+        var cellSize = Math.max(3, Math.floor(420 / count));
         var px = (count + margin * 2) * cellSize;
 
         var c = document.createElement('canvas');
@@ -102,10 +102,11 @@ function renderQR(elementId, text) {
 
         var img = document.createElement('img');
         img.src = c.toDataURL();
-        img.style.cssText = 'display:block;max-width:256px;height:auto;width:' + px + 'px';
+        img.style.cssText = 'display:block;width:100%;height:auto;max-width:' + px + 'px';
         el.appendChild(img);
+        el.style.cssText = 'background:#fff;padding:16px;border-radius:16px;display:flex;align-items:center;justify-content:center';
 
-        console.log('QR rendered as <img> from canvas, ' + count + 'x' + count + ' modules, ' + px + 'x' + px + 'px');
+        console.log('QR rendered, ' + count + 'x' + count + ' modules, canvas=' + px + 'x' + px + ', displayed at container width');
     } catch (e) {
         console.error('QR render error:', e);
         el.innerHTML = '<div style="color:#333;padding:16px;font-size:10px;word-break:break-all;max-width:256px">Data: ' + text.substring(0, 60) + '...</div>';
@@ -243,11 +244,15 @@ function startScanLoop() {
             const code = jsQR(imageData.data, imageData.width, imageData.height);
 
             if (code && code.data) {
+                console.log('QR scanned, data length:', code.data.length);
                 try {
                     const parsed = JSON.parse(code.data);
+                    console.log('QR parsed:', parsed.type);
                     handleScan(parsed);
                     return;
-                } catch (_) {}
+                } catch (e) {
+                    console.error('QR parse fail:', e.message);
+                }
             }
         }
         scanTimer = setTimeout(scan, SCAN_DELAY);
