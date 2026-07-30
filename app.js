@@ -11,7 +11,7 @@ var CONFIG = {
 };
 var CHUNK_SIZE = 16384;
 var SCAN_DELAY = 500;
-var ICE_TIMEOUT = 1000; // 1s timeout for ICE gathering (shorter → smaller SDP → less dense QR)
+var ICE_TIMEOUT = 200; // 200ms timeout for ICE gathering (shorter → smaller SDP → less dense QR)
 
 var state = 'home';
 var pc = null;
@@ -165,7 +165,7 @@ async function startHosting() {
 
         var sdp = pc.localDescription.sdp;
         console.log('Offer SDP length:', sdp.length);
-        var data = JSON.stringify({ type: 'offer', sdp: sdp });
+        var data = JSON.stringify({ t: 'o', s: sdp });
         renderQR('qrcode-host', data);
 
         $('host-status').textContent = 'Ask your friend to scan this QR code';
@@ -263,7 +263,7 @@ function startScanLoop() {
 async function handleScan(data) {
     stopCamera();
 
-    if (data.type === 'offer' && !isHost) {
+    if (data.t === 'o' && !isHost) {
         showScreen('connecting');
         $('connect-status').textContent = 'Connecting...';
 
@@ -272,12 +272,12 @@ async function handleScan(data) {
             pc.oniceconnectionstatechange = () => tryConnect();
             pc.ondatachannel = ev => setupDC(ev.channel);
 
-            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.s }));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             await waitForIceGathering(pc);
 
-            var answerData = JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp });
+            var answerData = JSON.stringify({ t: 'a', s: pc.localDescription.sdp });
             showScreen('show-answer');
             renderQR('qrcode-answer', answerData);
             $('answer-status').textContent = 'Show this to the host device';
@@ -286,9 +286,9 @@ async function handleScan(data) {
             setTimeout(() => showScreen('home'), 2500);
         }
 
-    } else if (data.type === 'answer' && isHost) {
+    } else if (data.t === 'a' && isHost) {
         try {
-            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.s }));
             $('host-status').textContent = 'Connected!';
             setTimeout(() => tryConnect(), 500);
         } catch (err) {
