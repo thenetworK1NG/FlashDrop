@@ -315,6 +315,8 @@ async function handleScan(data) {
 
 var _receivedCount = 0;
 var _receivedBytes = 0;
+var _txStart = 0;
+var _rxBatchStart = 0;
 
 function selectFiles() { $('file-input').click(); }
 
@@ -354,6 +356,7 @@ async function sendFiles() {
     renderSummary();
     $('btn-send').classList.add('hidden');
     $('progress-section').classList.remove('hidden');
+    resetProgressDisplay();
     // Reset progress circles
     var sFill = $('liquid-sender'), rFill = $('liquid-receiver');
     if (sFill) sFill.style.height = '100%';
@@ -363,15 +366,19 @@ async function sendFiles() {
     if (pr) pr.textContent = '0%';
     _lastPct = -1;
     _throttleTimer = 0;
-    clearSummary();
     // Hide send summary since files are being sent
     var fs = $('file-summary');
     if (fs) fs.classList.add('hidden');
 
+    _txStart = Date.now();
     for (const file of files) {
         await sendSingleFile(file);
     }
-    dc.send(JSON.stringify({ type: 'transfer-complete' }));
+    var elapsed = (Date.now() - _txStart) / 1000;
+    var totalBytes = files.reduce(function(s, f) { return s + f.size; }, 0);
+    var speed = elapsed > 0 ? (totalBytes * 8) / elapsed : 0;
+    dc.send(JSON.stringify({ type: 'transfer-complete', elapsed: elapsed, speed: speed }));
+    showSuccess(elapsed, speed);
     playSound('sent');
 }
 
@@ -428,11 +435,7 @@ async function sendSingleFile(file) {
 
     dc.send(JSON.stringify({ type: 'file-end', fileId, name: file.name }));
     updateProgress(1);
-
-    var elapsed = (Date.now() - throughput.start) / 1000;
-    var speed = elapsed > 0 ? (throughput.bytes * 8) / elapsed : 0;
     $('progress-label').textContent = 'Sent ' + file.name;
-    showSummary(file.name, elapsed, speed);
 }
 
 function handleMsg(data) {
@@ -441,15 +444,23 @@ function handleMsg(data) {
             const msg = JSON.parse(data);
             switch (msg.type) {
                 case 'transfer-complete':
+                    if (_rxBatchStart) {
+                        var rxElapsed = (Date.now() - _rxBatchStart) / 1000;
+                        var rxSpeed = rxElapsed > 0 ? (_receivedBytes * 8) / rxElapsed : 0;
+                        showSuccess(rxElapsed, rxSpeed);
+                    }
+                    _rxBatchStart = 0;
                     playSound('sent');
                     break;
                 case 'file-start':
+                    if (!_rxBatchStart) _rxBatchStart = Date.now();
                     recvBuffer = {
                         fileId: msg.fileId, name: msg.name, size: msg.size,
                         mimeType: msg.mimeType, chunks: [], received: 0,
                         totalChunks: msg.totalChunks, rxStart: Date.now()
                     };
                     $('progress-section').classList.remove('hidden');
+                    resetProgressDisplay();
                     // Reset receiver circle, sender stays full
                     var rf = $('liquid-receiver');
                     if (rf) rf.style.height = '0%';
@@ -457,7 +468,6 @@ function handleMsg(data) {
                     if (pr) pr.textContent = '0%';
                     _lastPct = -1;
                     _throttleTimer = 0;
-                    clearSummary();
                     $('progress-label').textContent = 'Receiving ' + msg.name;
                     updateProgress(0);
                     break;
@@ -468,11 +478,6 @@ function handleMsg(data) {
                         addReceived(recvBuffer.name, recvBuffer.size);
                         updateProgress(1);
                         $('progress-label').textContent = 'Received ' + recvBuffer.name;
-                        if (recvBuffer.rxStart) {
-                            var rxElapsed = (Date.now() - recvBuffer.rxStart) / 1000;
-                            var rxSpeed = rxElapsed > 0 ? (recvBuffer.size * 8) / rxElapsed : 0;
-                            showSummary(recvBuffer.name, rxElapsed, rxSpeed);
-                        }
                         recvBuffer = null;
                     }
                     break;
@@ -538,19 +543,22 @@ function fmtDuration(sec) {
     return m + 'm ' + s + 's';
 }
 
-function showSummary(name, elapsed, speed) {
-    var el = $('progress-summary');
-    if (!el) return;
-    el.innerHTML = '<span class="done">✓ Complete</span>' +
-        '<span class="sep">·</span>' +
-        '<span class="stat">' + fmtDuration(elapsed) + '</span>' +
-        '<span class="sep">·</span>' +
-        '<span class="stat">' + fmtSpeed(speed) + '</span>';
+function showSuccess(elapsed, speed) {
+    var wrap = document.querySelector('.liquid-wrap');
+    if (wrap) wrap.classList.add('fade-out');
+    $('progress-label').textContent = '';
+    setTimeout(function() {
+        $('success-time').textContent = fmtDuration(elapsed);
+        $('success-speed').textContent = fmtSpeed(speed);
+        $('success-notification').classList.add('show');
+    }, 480);
 }
 
-function clearSummary() {
-    var el = $('progress-summary');
-    if (el) el.innerHTML = '';
+function resetProgressDisplay() {
+    var wrap = document.querySelector('.liquid-wrap');
+    if (wrap) { wrap.classList.remove('fade-out'); wrap.style.opacity = ''; wrap.style.transform = ''; }
+    var notif = $('success-notification');
+    if (notif) notif.classList.remove('show');
 }
 
 function disconnect() {
@@ -564,6 +572,8 @@ function disconnect() {
     $('btn-send').classList.add('hidden');
     _receivedCount = 0;
     _receivedBytes = 0;
+    _rxBatchStart = 0;
+    resetProgressDisplay();
     recvBuffer = null;
     if (qrHost) { qrHost.clear(); qrHost = null; }
     if (qrAnswer) { qrAnswer.clear(); qrAnswer = null; }
