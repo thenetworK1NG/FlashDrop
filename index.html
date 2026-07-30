@@ -14,6 +14,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0d1117;--surface:#161b22;--surface-hover:#1c2129;--border:#30363d;--text:#c9d1d9;--text-muted:#8b949e;--primary:#58a6ff;--primary-hover:#79c0ff;--accent:#3fb950;--error:#f85149}
+.debug-box{margin-top:8px;color:#666;font-size:9px;word-break:break-all;max-width:256px}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
 #app{max-width:480px;margin:0 auto;padding:16px;padding-top:env(safe-area-inset-top,16px);padding-bottom:env(safe-area-inset-bottom,16px);min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
 .screen{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:20px;animation:fadeIn .3s ease;width:100%}
@@ -39,7 +40,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 .hero p{color:var(--text-muted)}
 .actions{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;padding:20px 0}
 .qr-wrap{background:#fff;padding:16px;border-radius:16px;display:inline-flex}
-.qr-wrap canvas,.qr-wrap img{display:block;max-width:256px;height:auto}
+.qr-wrap canvas,.qr-wrap img,.qr-wrap svg{display:block;max-width:256px;height:auto}
 .camera-box{width:100%;max-width:360px;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3}
 .camera-box video{width:100%;height:100%;object-fit:cover}
 .status{color:var(--text-muted);text-align:center;font-size:.9rem}
@@ -142,19 +143,18 @@ header p{color:var(--text-muted);font-size:.9rem}
 </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script>console.log('Pre-check: QRCode=' + (typeof QRCode) + ' jsQR=' + (typeof jsQR) + ' app.js loading...');</script>
+<script>console.log('Pre-check: qrcode=' + (typeof qrcode) + ' jsQR=' + (typeof jsQR) + ' app.js loading...');</script>
 <script src="app.js"></script>
 
 <script>
 console.log('Post-check: app.js loaded', typeof startHosting);
-// Safety: fallback if app.js didn't load (e.g. syntax error)
 (function() {
-    var btn1 = document.getElementById('btn-host');
-    var btn2 = document.getElementById('btn-join');
     if (typeof startHosting !== 'function') {
         console.warn('FALLBACK: startHosting not found. app.js may have failed.');
+        var btn1 = document.getElementById('btn-host');
+        var btn2 = document.getElementById('btn-join');
         btn1.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
         btn2.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
     }

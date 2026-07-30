@@ -32,7 +32,7 @@ function showScreen(id) {
     for (var i = 0; i < screens.length; i++) {
         screens[i].classList.remove('active');
     }
-    var el = $(id);
+    var el = $('screen-' + id);
     if (el) el.classList.add('active');
     state = id;
 }
@@ -59,6 +59,57 @@ function formatSize(bytes) {
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
     if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
     return (bytes / 1073741824).toFixed(2) + ' GB';
+}
+
+// ===================== QR CODE RENDERING =====================
+
+function renderQR(elementId, text) {
+    var el = $(elementId);
+    el.innerHTML = '';
+
+    if (typeof qrcode === 'undefined') {
+        el.innerHTML = '<div style="color:#333;padding:20px;text-align:center">QR library not loaded.</div>';
+        console.error('qrcode library not found');
+        return;
+    }
+
+    try {
+        var qr = qrcode(0, 'L');
+        qr.addData(text);
+        qr.make();
+
+        var count = qr.getModuleCount();
+        var margin = 2;
+        var cellSize = Math.max(2, Math.floor(240 / count));
+        var px = (count + margin * 2) * cellSize;
+
+        var c = document.createElement('canvas');
+        c.width = px;
+        c.height = px;
+        var ctx = c.getContext('2d');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, px, px);
+
+        ctx.fillStyle = '#000000';
+        for (var r = 0; r < count; r++) {
+            for (var col = 0; col < count; col++) {
+                if (qr.isDark(r, col)) {
+                    ctx.fillRect((col + margin) * cellSize, (r + margin) * cellSize, cellSize, cellSize);
+                }
+            }
+        }
+
+        var img = document.createElement('img');
+        img.src = c.toDataURL();
+        img.style.cssText = 'display:block;max-width:256px;height:auto;width:' + px + 'px';
+        el.appendChild(img);
+
+        console.log('QR rendered as <img> from canvas, ' + count + 'x' + count + ' modules, ' + px + 'x' + px + 'px');
+    } catch (e) {
+        console.error('QR render error:', e);
+        el.innerHTML = '<div style="color:#333;padding:16px;font-size:10px;word-break:break-all;max-width:256px">Data: ' + text.substring(0, 60) + '...</div>';
+    }
 }
 
 // ===================== WEBRTC =====================
@@ -114,22 +165,7 @@ async function startHosting() {
         var sdp = pc.localDescription.sdp;
         console.log('Offer SDP length:', sdp.length);
         var data = JSON.stringify({ type: 'offer', sdp: sdp });
-        $('qrcode-host').innerHTML = '';
-
-        if (typeof QRCode === 'undefined') {
-            $('qrcode-host').innerHTML = '<p style="color:#000;padding:20px;text-align:center;word-break:break-all">QR library not loaded.<br>Check internet connection.<br><br>Session data:<br><small>' + data.substring(0, 100) + '...</small></p>';
-            $('host-status').textContent = 'Warning: QR library missing. Check console.';
-            console.error('QRCode library not loaded. CDN may be blocked.');
-        } else {
-            qrHost = new QRCode($('qrcode-host'), {
-                text: data,
-                width: 256,
-                height: 256,
-                colorDark: '#000000',
-                colorLight: '#ffffff',
-                correctLevel: QRCode.CorrectLevel.L
-            });
-        }
+        renderQR('qrcode-host', data);
 
         $('host-status').textContent = 'Ask your friend to scan this QR code';
         $('btn-scan-answer').classList.remove('hidden');
@@ -236,20 +272,9 @@ async function handleScan(data) {
             await pc.setLocalDescription(answer);
             await waitForIceGathering(pc);
 
-            const answerData = JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp });
+            var answerData = JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp });
             showScreen('show-answer');
-            $('qrcode-answer').innerHTML = '';
-            if (qrAnswer) qrAnswer.clear();
-
-            qrAnswer = new QRCode($('qrcode-answer'), {
-                text: answerData,
-                width: 256,
-                height: 256,
-                colorDark: '#000000',
-                colorLight: '#ffffff',
-                correctLevel: QRCode.CorrectLevel.L
-            });
-
+            renderQR('qrcode-answer', answerData);
             $('answer-status').textContent = 'Show this to the host device';
         } catch (err) {
             $('connect-status').textContent = 'Error: ' + err.message;
@@ -437,11 +462,7 @@ function init() {
         console.error('Critical: btn-host not found. App cannot initialize.');
         return;
     }
-    b._listenerAttached = true;
-    // buttons use onclick in HTML as the primary handler
-    var b2 = $('btn-join');
-    if (b2) b2._listenerAttached = true;
-    // btn-host and btn-join use inline onclick; addEventListener not needed
+    // btn-host and btn-join use inline onclick in HTML; addEventListener not needed here
     $('btn-scan-answer').addEventListener('click', hostScanAnswer);
     $('btn-cancel-scan').addEventListener('click', function() { stopCamera(); showScreen('home'); });
     $('btn-back-host').addEventListener('click', disconnect);
@@ -468,10 +489,9 @@ if (document.readyState === 'loading') {
     try { init(); } catch (e) { console.error('Init error:', e); }
 }
 
-// Explicitly expose entry points to global scope for inline onclick
+// Explicitly expose entry points for inline onclick
 window.startHosting = startHosting;
 window.startJoining = startJoining;
-window.hostScanAnswer = hostScanAnswer;
 window.selectFiles = selectFiles;
 window.sendFiles = sendFiles;
 window.disconnect = disconnect;
