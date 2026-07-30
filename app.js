@@ -303,36 +303,36 @@ async function handleScan(data) {
 
 // ===================== FILE TRANSFER =====================
 
+var _receivedCount = 0;
+var _receivedBytes = 0;
+
 function selectFiles() { $('file-input').click(); }
 
 function onFilesSelected(e) {
     const files = Array.from(e.target.files);
     fileQueue.push(...files);
-    renderFileList();
+    renderSummary();
 }
 
-function renderFileList() {
-    const container = $('file-list');
+function renderSummary() {
+    var el = $('file-summary');
+    var countEl = $('file-count');
+    var sizeEl = $('file-total-size');
     if (fileQueue.length === 0) {
-        container.innerHTML = '<p class="empty-state">No files selected</p>';
+        el.classList.add('hidden');
         $('btn-send').classList.add('hidden');
         return;
     }
-    container.innerHTML = fileQueue.map((f, i) =>
-        `<div class="file-item">
-            <span class="name">${escHtml(f.name)}</span>
-            <span class="size">${formatSize(f.size)}</span>
-            <button class="btn-small" data-index="${i}">✕</button>
-        </div>`
-    ).join('');
+    var total = fileQueue.reduce(function(s, f) { return s + f.size; }, 0);
+    countEl.textContent = fileQueue.length + ' file' + (fileQueue.length !== 1 ? 's' : '');
+    sizeEl.textContent = '· ' + formatSize(total);
+    el.classList.remove('hidden');
     $('btn-send').classList.remove('hidden');
 }
 
-function escHtml(s) { return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-function removeFile(i) {
-    fileQueue.splice(i, 1);
-    renderFileList();
+function clearFiles() {
+    fileQueue = [];
+    renderSummary();
 }
 
 async function sendFiles() {
@@ -341,7 +341,7 @@ async function sendFiles() {
 
     const files = [...fileQueue];
     fileQueue = [];
-    renderFileList();
+    renderSummary();
     $('btn-send').classList.add('hidden');
     $('progress-section').classList.remove('hidden');
     // Reset progress circles
@@ -354,6 +354,9 @@ async function sendFiles() {
     _lastPct = -1;
     _throttleTimer = 0;
     clearSummary();
+    // Hide send summary since files are being sent
+    var fs = $('file-summary');
+    if (fs) fs.classList.add('hidden');
 
     for (const file of files) {
         await sendSingleFile(file);
@@ -481,14 +484,15 @@ function dlBlob(blob, name) {
 }
 
 function addReceived(name, size) {
-    const container = $('received-files');
-    const empty = container.querySelector('.empty-state');
-    if (empty) empty.remove();
-
-    const div = document.createElement('div');
-    div.className = 'file-item';
-    div.innerHTML = `<span class="name">⬇ ${escHtml(name)}</span><span class="size">${formatSize(size)}</span><span class="status">Complete</span>`;
-    container.prepend(div);
+    _receivedCount++;
+    _receivedBytes += size;
+    var empty = $('received-empty');
+    var text = $('received-text');
+    if (empty) empty.classList.add('hidden');
+    if (text) {
+        text.classList.remove('hidden');
+        text.innerHTML = '<span class="hit">' + _receivedCount + '</span> ' + (_receivedCount === 1 ? 'item' : 'items') + ' received · ' + formatSize(_receivedBytes);
+    }
 }
 
 var _lastPct = -1;
@@ -540,12 +544,20 @@ function disconnect() {
     isHost = false;
     autoConnected = false;
     fileQueue = [];
+    var fs = $('file-summary');
+    if (fs) fs.classList.add('hidden');
+    $('btn-send').classList.add('hidden');
+    _receivedCount = 0;
+    _receivedBytes = 0;
     recvBuffer = null;
     if (qrHost) { qrHost.clear(); qrHost = null; }
     if (qrAnswer) { qrAnswer.clear(); qrAnswer = null; }
     stopCamera();
     $('progress-section').classList.add('hidden');
     $('file-input').value = '';
+    var empty = $('received-empty'), text = $('received-text');
+    if (empty) empty.classList.remove('hidden');
+    if (text) text.classList.add('hidden');
     showScreen('home');
 }
 
@@ -564,12 +576,7 @@ function init() {
     $('btn-select-files').addEventListener('click', selectFiles);
     $('file-input').addEventListener('change', onFilesSelected);
     $('btn-send').addEventListener('click', sendFiles);
-    $('file-list').addEventListener('click', function(e) {
-        var btn = e.target.closest('.btn-small');
-        if (btn && btn.dataset.index !== undefined) {
-            removeFile(parseInt(btn.dataset.index));
-        }
-    });
+    $('btn-clear-files').addEventListener('click', clearFiles);
     $('btn-disconnect').addEventListener('click', disconnect);
     console.log('QuickShare initialized successfully');
 }

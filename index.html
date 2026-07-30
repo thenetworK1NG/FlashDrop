@@ -44,12 +44,14 @@ header p{color:var(--text-muted);font-size:.9rem}
 .camera-box{width:100%;max-width:360px;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3}
 .camera-box video{width:100%;height:100%;object-fit:cover}
 .status{color:var(--text-muted);text-align:center;font-size:.9rem}
-.file-list{width:100%;max-width:400px;display:flex;flex-direction:column;gap:8px}
-.file-item{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
-.file-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem}
-.file-item .size{color:var(--text-muted);font-size:.8rem;white-space:nowrap}
-.file-item .status{color:var(--accent);font-size:.8rem}
+.file-summary{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:.85rem;width:100%;max-width:400px;margin:8px 0 0 0}
+.file-summary .count{flex:1;color:var(--text)}
+.file-summary .total-size{color:var(--text-muted)}
+.file-summary .clear-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.1rem;padding:0 4px;line-height:1}
+.file-summary .clear-btn:hover{color:var(--text)}
 .empty-state{color:var(--text-muted);text-align:center;padding:20px;font-size:.9rem;width:100%}
+.received-summary{text-align:center;color:var(--text-muted);font-size:.85rem;padding:8px 0;width:100%}
+.received-summary .hit{color:var(--accent);font-weight:600}
 .progress-box{width:100%;max-width:400px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
 .progress-box .label{font-size:.9rem;margin-bottom:8px;word-break:break-all;text-align:center}
 .progress-summary{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:.75rem;color:var(--text-muted);line-height:1.4}
@@ -124,16 +126,23 @@ header p{color:var(--text-muted);font-size:.9rem}
 <div class="conn-status"><span class="conn-dot"></span> Connected</div>
 
 <div class="send-section">
-<h3>📤 Send Files</h3>
+<h3>📤 Send</h3>
 <input type="file" id="file-input" multiple hidden>
-<button id="btn-select-files" class="btn btn-secondary" style="max-width:100%;padding:12px">Select Files to Send</button>
-<div id="file-list" class="file-list"><p class="empty-state">No files selected</p></div>
+<button id="btn-select-files" class="btn btn-secondary" style="max-width:100%;padding:12px">Select Files</button>
+<div id="file-summary" class="file-summary hidden">
+<span class="count" id="file-count"></span>
+<span class="total-size" id="file-total-size"></span>
+<button id="btn-clear-files" class="clear-btn">✕</button>
+</div>
 <button id="btn-send" class="btn btn-accent hidden" style="margin-top:8px">Send All</button>
 </div>
 
 <div class="receive-section" style="margin-top:20px">
-<h3>📥 Received Files</h3>
-<div id="received-files" class="file-list"><p class="empty-state">No files received yet</p></div>
+<h3>📥 Received</h3>
+<div id="received-summary" class="received-summary">
+<span id="received-empty" class="empty-state">No files received yet</span>
+<span id="received-text" class="hidden"></span>
+</div>
 </div>
 
 <div id="progress-section" class="progress-box hidden">
