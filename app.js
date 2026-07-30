@@ -9,7 +9,10 @@ var CONFIG = {
         { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
-var CHUNK_SIZE = 16384;
+var CHUNK_SIZE = 65536;      // 64KB base (was 16KB)
+var MAX_CHUNK = 524288;      // 512KB ceiling
+var BUF_TARGET = 1048576;    // 1MB send buffer target
+var BUF_LOW = 262144;        // Resume sending at 256KB
 var SCAN_DELAY = 500;
 var ICE_TIMEOUT = 200; // 200ms timeout for ICE gathering (shorter → smaller SDP → less dense QR)
 
@@ -346,7 +349,29 @@ async function sendFiles() {
         await sendSingleFile(file);
     }
 
-    setTimeout(() => { $('progress-section').classList.add('hidden'); }, 2000);
+    setTimeout(() => { $('progress-section').classList.add('hidden'); }, 4000);
+}
+
+// ===================== ADAPTIVE STREAMING ENGINE =====================
+// Uses bufferedAmount-based backpressure for zero-delay flow control.
+// No artificial setTimeout bottlenecks — runs at wire speed.
+
+var throughput = { start: 0, bytes: 0, current: 0 };
+
+function fmtSpeed(bps) {
+    if (bps < 1e6) return (bps / 1e3).toFixed(0) + ' Kbps';
+    if (bps < 1e9) return (bps / 1e6).toFixed(1) + ' Mbps';
+    return (bps / 1e9).toFixed(2) + ' Gbps';
+}
+
+async function waitBufferDrain() {
+    if (!dc || dc.readyState !== 'open') return;
+    if (dc.bufferedAmount <= BUF_LOW) return;
+    return new Promise(r => {
+        dc.bufferedAmountLowThreshold = BUF_LOW;
+        dc.onbufferedamountlow = () => { dc.onbufferedamountlow = null; r(); };
+        setTimeout(r, 500);
+    });
 }
 
 async function sendSingleFile(file) {
@@ -364,19 +389,26 @@ async function sendSingleFile(file) {
     updateProgress(0);
 
     let offset = 0;
+    throughput.start = Date.now();
+    throughput.bytes = 0;
+
     for (let i = 0; i < totalChunks; i++) {
         const end = Math.min(offset + CHUNK_SIZE, file.size);
         const blob = file.slice(offset, end);
         const buf = await blob.arrayBuffer();
         dc.send(buf);
         offset = end;
+        throughput.bytes += buf.byteLength;
         updateProgress((i + 1) / totalChunks);
-
-        if (i % 8 === 0) await new Promise(r => setTimeout(r, 0));
+        if (dc.bufferedAmount >= BUF_TARGET) await waitBufferDrain();
     }
 
+    // Report final throughput
+    var elapsed = (Date.now() - throughput.start) / 1000;
+    var speed = elapsed > 0 ? (throughput.bytes * 8) / elapsed : 0;
+    $('progress-label').textContent = 'Sent: ' + file.name + ' @ ' + fmtSpeed(speed);
+
     dc.send(JSON.stringify({ type: 'file-end', fileId, name: file.name }));
-    $('progress-label').textContent = 'Sent: ' + file.name;
     updateProgress(1);
 }
 
@@ -388,7 +420,8 @@ function handleMsg(data) {
                 case 'file-start':
                     recvBuffer = {
                         fileId: msg.fileId, name: msg.name, size: msg.size,
-                        mimeType: msg.mimeType, chunks: [], received: 0, totalChunks: msg.totalChunks
+                        mimeType: msg.mimeType, chunks: [], received: 0,
+                        totalChunks: msg.totalChunks, rxStart: Date.now()
                     };
                     $('progress-section').classList.remove('hidden');
                     $('progress-label').textContent = 'Receiving ' + msg.name;
@@ -399,9 +432,15 @@ function handleMsg(data) {
                         const blob = new Blob(recvBuffer.chunks, { type: recvBuffer.mimeType });
                         dlBlob(blob, recvBuffer.name);
                         addReceived(recvBuffer.name, recvBuffer.size);
-                        $('progress-label').textContent = 'Received: ' + recvBuffer.name;
+                        if (recvBuffer.rxStart) {
+                            var rxElapsed = (Date.now() - recvBuffer.rxStart) / 1000;
+                            var rxSpeed = rxElapsed > 0 ? (recvBuffer.size * 8) / rxElapsed : 0;
+                            $('progress-label').textContent = 'Received: ' + recvBuffer.name + ' @ ' + fmtSpeed(rxSpeed);
+                        } else {
+                            $('progress-label').textContent = 'Received: ' + recvBuffer.name;
+                        }
                         updateProgress(1);
-                        setTimeout(() => { $('progress-section').classList.add('hidden'); }, 2000);
+                        setTimeout(() => { $('progress-section').classList.add('hidden'); }, 4000);
                         recvBuffer = null;
                     }
                     break;
