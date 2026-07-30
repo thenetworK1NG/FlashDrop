@@ -243,10 +243,14 @@ function makeSessionCode() {
 }
 
 function derivePwd(code, salt) {
-    var s = code + salt;
+    var s = code + salt + 'qs';
     var h = 0;
     for (var i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
-    return code + Math.abs(h).toString(36).substr(0, 4);
+    var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    var r = '';
+    var seed = Math.abs(h);
+    for (var i = 0; i < 22; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; r += chars[seed % chars.length]; }
+    return r;
 }
 
 function applyCodeToSdp(sdp, code, salt) {
