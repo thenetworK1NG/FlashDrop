@@ -51,10 +51,16 @@ header p{color:var(--text-muted);font-size:.9rem}
 .file-item .status{color:var(--accent);font-size:.8rem}
 .empty-state{color:var(--text-muted);text-align:center;padding:20px;font-size:.9rem;width:100%}
 .progress-box{width:100%;max-width:400px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
-.progress-box .label{font-size:.9rem;margin-bottom:8px;word-break:break-all}
-.progress-bar{width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
-.progress-fill{height:100%;background:var(--primary);border-radius:4px;transition:width .3s ease;width:0%}
-.progress-text{text-align:right;font-size:.8rem;color:var(--text-muted);margin-top:4px}
+.progress-box .label{font-size:.9rem;margin-bottom:12px;word-break:break-all;text-align:center}
+.liquid-wrap{display:flex;align-items:center;justify-content:center;gap:16px;width:100%;padding:8px 0}
+.liquid-circle{width:100px;height:100px;border-radius:50%;position:relative;overflow:hidden;background:#0d1117;border:3px solid var(--border);flex-shrink:0;box-shadow:0 0 20px rgba(63,185,80,.08)}
+.liquid-fill{position:absolute;bottom:0;left:0;width:100%;height:0%;background:linear-gradient(180deg,#2ea043,#3fb950);transition:height .5s cubic-bezier(.4,0,.2,1)}
+.liquid-fill::before{content:'';position:absolute;top:-12px;left:-50%;width:200%;height:24px;background:rgba(255,255,255,.08);border-radius:45%;animation:wave 3s ease-in-out infinite}
+.liquid-fill::after{content:'';position:absolute;top:-8px;left:-50%;width:200%;height:16px;background:rgba(255,255,255,.04);border-radius:40%;animation:wave 4s ease-in-out infinite reverse}
+@keyframes wave{0%{transform:translateX(0) rotate(0deg)}50%{transform:translateX(-25%) rotate(2deg)}100%{transform:translateX(0) rotate(0deg)}}
+.circle-pct{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:1.3rem;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6);z-index:2;pointer-events:none}
+.circle-label{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font-size:.65rem;color:var(--text-muted);white-space:nowrap;pointer-events:none}
+.liquid-arrow{font-size:1.4rem;color:var(--text-muted);flex-shrink:0}
 .send-section,.receive-section{width:100%;max-width:400px}
 .send-section h3,.receive-section h3{font-size:1rem;margin-bottom:12px;color:var(--text-muted)}
 .conn-status{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;width:100%;max-width:400px}
@@ -128,8 +134,19 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <div id="progress-section" class="progress-box hidden">
 <div class="label" id="progress-label">Transferring...</div>
-<div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-<div class="progress-text" id="progress-text">0%</div>
+<div class="liquid-wrap">
+<div class="liquid-circle" id="circle-sender">
+<div class="liquid-fill" id="liquid-sender" style="height:100%"></div>
+<span class="circle-pct" id="pct-sender">0%</span>
+<span class="circle-label">Sending</span>
+</div>
+<span class="liquid-arrow">→</span>
+<div class="liquid-circle" id="circle-receiver">
+<div class="liquid-fill" id="liquid-receiver" style="height:0%"></div>
+<span class="circle-pct" id="pct-receiver">0%</span>
+<span class="circle-label">Receiving</span>
+</div>
+</div>
 </div>
 
 <button id="btn-disconnect" class="btn btn-text" style="margin-top:auto;padding:20px">Disconnect</button>

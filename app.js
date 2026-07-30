@@ -344,6 +344,13 @@ async function sendFiles() {
     renderFileList();
     $('btn-send').classList.add('hidden');
     $('progress-section').classList.remove('hidden');
+    // Reset progress circles
+    var sFill = $('liquid-sender'), rFill = $('liquid-receiver');
+    if (sFill) sFill.style.height = '100%';
+    if (rFill) rFill.style.height = '0%';
+    var ps = $('pct-sender'), pr = $('pct-receiver');
+    if (ps) ps.textContent = '0%';
+    if (pr) pr.textContent = '0%';
 
     for (const file of files) {
         await sendSingleFile(file);
@@ -424,6 +431,11 @@ function handleMsg(data) {
                         totalChunks: msg.totalChunks, rxStart: Date.now()
                     };
                     $('progress-section').classList.remove('hidden');
+                    // Reset receiver circle, sender stays full
+                    var rf = $('liquid-receiver');
+                    if (rf) rf.style.height = '0%';
+                    var pr = $('pct-receiver');
+                    if (pr) pr.textContent = '0%';
                     $('progress-label').textContent = 'Receiving ' + msg.name;
                     updateProgress(0);
                     break;
@@ -479,8 +491,16 @@ function addReceived(name, size) {
 
 function updateProgress(fraction) {
     const pct = Math.min(100, Math.round(fraction * 100));
-    $('progress-fill').style.width = pct + '%';
-    $('progress-text').textContent = pct + '%';
+    // Sender: liquid drains (full → empty)
+    var s = $('liquid-sender');
+    if (s) s.style.height = (100 - pct) + '%';
+    var ps = $('pct-sender');
+    if (ps) ps.textContent = pct + '%';
+    // Receiver: liquid fills (empty → full)
+    var r = $('liquid-receiver');
+    if (r) r.style.height = pct + '%';
+    var pr = $('pct-receiver');
+    if (pr) pr.textContent = pct + '%';
 }
 
 function disconnect() {
