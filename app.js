@@ -165,6 +165,7 @@ function renderQR(elementId, text) {
 // ===================== WEBRTC =====================
 
 function setupCtrlDC(channel) {
+    ctrlDC = channel;
     channel.binaryType = 'arraybuffer';
     channel.onmessage = function(e) {
         if (typeof e.data === 'string') handleCtrlMsg(e.data);
@@ -175,18 +176,22 @@ function setupCtrlDC(channel) {
     channel.onerror = function(e) { console.error('CTRL DC error', e); };
     channel.onclose = function() {
         if (state === 'connected') {
-            alert('Connection closed');
             disconnect();
         }
     };
 }
 
 function setupDataDC(channel, index) {
+    dataDCs[index] = channel;
     channel.binaryType = 'arraybuffer';
     channel.onmessage = function(e) {
         if (e.data instanceof ArrayBuffer) handleDataMsg(e.data, index);
     };
-    channel.onerror = function(e) { console.error('Data DC ' + index + ' error', e); };
+    channel.onopen = function() {
+        console.log('Data channel ' + index + ' open');
+        if (!autoConnected) tryConnect();
+    };
+    channel.onerror = function(e) { console.warn('Data DC ' + index + ' error', e); };
     channel.onclose = function() {
         console.log('Data channel ' + index + ' closed');
     };
@@ -220,10 +225,10 @@ async function startHosting() {
         pc = new RTCPeerConnection(CONFIG);
         pc.oniceconnectionstatechange = function() { tryConnect(); };
 
-        ctrlDC = pc.createDataChannel('control', { ordered: true });
+        ctrlDC = pc.createDataChannel('control');
         setupCtrlDC(ctrlDC);
         for (var i = 0; i < NUM_DATA_CHANNELS; i++) {
-            var ch = pc.createDataChannel('data-' + i, { ordered: false });
+            var ch = pc.createDataChannel('data-' + i);
             setupDataDC(ch, i);
             dataDCs[i] = ch;
         }
