@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>QuickShare - P2P File Transfer</title>
-<meta name="description" content="Share files directly between devices, no server needed">
+<meta name="description" content="Share files directly between devices using a quick code">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0d1117">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -52,10 +52,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 .hero h2{font-size:1.5rem;margin-bottom:8px}
 .hero p{color:var(--text-muted)}
 .actions{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;padding:20px 0}
-.qr-wrap{background:#fff;padding:16px;display:inline-flex}
-.qr-wrap canvas,.qr-wrap img,.qr-wrap svg{display:block;max-width:min(85vw,480px);width:100%;height:auto}
-.camera-box{width:100%;max-width:360px;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3}
-.camera-box video{width:100%;height:100%;object-fit:cover}
 .status{color:var(--text-muted);text-align:center;font-size:.9rem}
 .file-summary{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:.85rem;width:100%;max-width:400px;margin:8px 0 0 0}
 .file-summary .count{flex:1;color:var(--text)}
@@ -119,11 +115,9 @@ header p{color:var(--text-muted);font-size:.9rem}
 <div id="screen-hosting" class="screen">
 <h2>Your Share Code</h2>
 <div class="room-code" id="host-code">····</div>
-<p class="status">Share this code, or have your friend scan the QR</p>
-<div class="qr-wrap" id="qrcode-host"></div>
+<p class="status">Share this code with your friend</p>
 <p class="status" id="host-status">Generating...</p>
 <button id="btn-copy-link" class="btn btn-text hidden">🔗 Copy Share Link</button>
-<button id="btn-scan-answer" class="btn btn-primary hidden">📷 Scan Their Reply</button>
 <button id="btn-back-host" class="btn btn-text">Cancel</button>
 </div>
 
@@ -133,24 +127,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 <p class="status">Type the 4-letter code from the sender</p>
 <input id="code-input" class="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="····">
 <button id="btn-connect-code" class="btn btn-primary">Connect</button>
-<button id="btn-scan-qr" class="btn btn-text">📷 Scan QR Instead</button>
 <button id="btn-back-code" class="btn btn-text">Back</button>
-</div>
-
-<!-- SCANNING -->
-<div id="screen-scanning" class="screen">
-<h2>Scan QR Code</h2>
-<p class="status" id="scan-status">Point your camera at the QR code</p>
-<div class="camera-box"><video id="camera-view" autoplay playsinline muted></video></div>
-<button id="btn-cancel-scan" class="btn btn-text">Cancel</button>
-</div>
-
-<!-- SHOW ANSWER -->
-<div id="screen-show-answer" class="screen">
-<h2>Almost Connected!</h2>
-<p class="status">Show this code to the host device so they can scan it</p>
-<div class="qr-wrap" id="qrcode-answer"></div>
-<p class="status" id="answer-status">Waiting for host to scan...</p>
 </div>
 
 <!-- CONNECTED -->
@@ -212,9 +189,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script>console.log('Pre-check: qrcode=' + (typeof qrcode) + ' jsQR=' + (typeof jsQR) + ' app.js loading...');</script>
 <script src="app.js"></script>
 
 <script>
