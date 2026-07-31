@@ -38,7 +38,7 @@ self.addEventListener('notificationclick', (e) => {
     );
 });
 
-const CACHE = 'quickshare-v5';
+const CACHE = 'quickshare-v6';
 const URLS = ['.', 'index.html', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', (e) => {

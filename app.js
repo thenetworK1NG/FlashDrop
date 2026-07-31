@@ -243,29 +243,47 @@ function releaseWakeLock() {
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
 }
 
-// Silent audio loop so the browser keeps the tab alive in the background
-// (tabs playing audio are exempt from aggressive background throttling).
+// Silent audio loop so the browser keeps the tab alive in the background.
+// IMPORTANT: gain must be NONZERO - Chrome treats zero-amplitude audio as
+// "silent" and does not grant the background-playback exemption (tabs playing
+// audio are exempt from aggressive background throttling/freezing).
 var keepAlive = null;
+function buildKeepAliveSource(ctx) {
+    var len = ctx.sampleRate * 6;
+    var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.5;
+    var src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    return src;
+}
 function initKeepAlive() {
     try {
         if (keepAlive) return;
         var AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return;
         var ctx = new AC();
-        var len = ctx.sampleRate;
-        var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
-        var data = buffer.getChannelData(0);
-        for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.001;
-        var src = ctx.createBufferSource();
-        src.buffer = buffer;
-        src.loop = true;
+        var src = buildKeepAliveSource(ctx);
         var gain = ctx.createGain();
-        gain.gain.value = 0;
+        gain.gain.value = 0.1;
         src.connect(gain);
         gain.connect(ctx.destination);
-        keepAlive = { ctx: ctx, src: src };
+        keepAlive = { ctx: ctx, src: src, gain: gain, rate: ctx.sampleRate };
         src.start();
         if (ctx.state === 'suspended') ctx.resume().catch(function() {});
+        ctx.onstatechange = function() {
+            if (!keepAlive || keepAlive.ctx !== ctx) return;
+            if (ctx.state === 'suspended') ctx.resume().catch(function() {});
+            if (ctx.sampleRate !== keepAlive.rate) {
+                try { keepAlive.src.stop(); } catch (e) {}
+                var s2 = buildKeepAliveSource(ctx);
+                keepAlive.rate = ctx.sampleRate;
+                s2.connect(keepAlive.gain);
+                keepAlive.src = s2;
+                s2.start();
+            }
+        };
     } catch (e) { keepAlive = null; }
 }
 function startKeepAlive() {
@@ -761,6 +779,9 @@ async function sendFiles() {
     if (openDCs.length === 0) return alert('No data channels available.');
 
     if (fileQueue.length === 0) return;
+
+    requestWakeLock();
+    startKeepAlive();
 
     const files = [...fileQueue];
     fileQueue = [];
@@ -1334,7 +1355,13 @@ window.reconnectTo = reconnectTo;
     document.addEventListener('touchstart', armKeepAlive);
     document.addEventListener('keydown', armKeepAlive);
     document.addEventListener('visibilitychange', function() {
-        if (state === 'connected' && document.visibilityState === 'visible') requestWakeLock();
+        if (state === 'connected') {
+            if (document.visibilityState === 'visible') {
+                requestWakeLock();
+            } else {
+                startKeepAlive();
+            }
+        }
     });
     try {
         var hm = location.hash.match(/[#&]c=([A-Za-z0-9]+)/);
