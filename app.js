@@ -56,6 +56,7 @@ var FB_CONFIG = {
     appId: '1:280437631286:web:ed636e0fa0a4c7c5d56b97'
 };
 var DB = null;
+var VAPID_KEY = 'BInpmIM-OZmuN5NxEY_AccW3eEh3EpGYzLjHD2VV-K7Rwwcs3e0DQTpg1vbehzL4jxGtEjuds_O4ydTf4OCaA5A';
 try {
     if (typeof firebase !== 'undefined' && firebase.initializeApp) {
         firebase.initializeApp(FB_CONFIG);
@@ -205,7 +206,11 @@ var wakeLock = null;
 function requestNotificationPermission() {
     try {
         if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission().catch(function() {});
+            Notification.requestPermission().then(function(p) {
+                if (p === 'granted') registerFcmToken();
+            }).catch(function() {});
+        } else if ('Notification' in window && Notification.permission === 'granted') {
+            registerFcmToken();
         }
     } catch (e) {}
 }
@@ -236,6 +241,215 @@ function requestWakeLock() {
 
 function releaseWakeLock() {
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+}
+
+// Silent audio loop so the browser keeps the tab alive in the background
+// (tabs playing audio are exempt from aggressive background throttling).
+var keepAlive = null;
+function initKeepAlive() {
+    try {
+        if (keepAlive) return;
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        var ctx = new AC();
+        var len = ctx.sampleRate;
+        var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+        var data = buffer.getChannelData(0);
+        for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.001;
+        var src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.loop = true;
+        var gain = ctx.createGain();
+        gain.gain.value = 0;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        keepAlive = { ctx: ctx, src: src };
+        src.start();
+        if (ctx.state === 'suspended') ctx.resume().catch(function() {});
+    } catch (e) { keepAlive = null; }
+}
+function startKeepAlive() {
+    try {
+        if (!keepAlive) initKeepAlive();
+        if (keepAlive && keepAlive.ctx.state === 'suspended') keepAlive.ctx.resume().catch(function() {});
+    } catch (e) {}
+}
+function stopKeepAlive() {
+    try {
+        if (keepAlive) {
+            try { keepAlive.src.stop(); } catch (e) {}
+            try { keepAlive.ctx.close(); } catch (e) {}
+            keepAlive = null;
+        }
+    } catch (e) {}
+}
+
+// ===================== PUSH NOTIFICATIONS (FCM) =====================
+
+var messaging = null;
+var fcmToken = null;
+
+function initMessaging() {
+    try {
+        if (firebase.messaging && firebase.messaging.isSupported && firebase.messaging.isSupported()) {
+            messaging = firebase.messaging();
+            messaging.onMessage(function(payload) {
+                var d = payload.data || {};
+                notify(d.title || 'QuickShare', d.body || 'New message', 'granted', [200, 100, 200]);
+            });
+            if (messaging.onTokenRefresh) {
+                messaging.onTokenRefresh(function() {
+                    fcmToken = null;
+                    registerFcmToken();
+                });
+            }
+        }
+    } catch (e) { console.warn('Messaging init failed:', e); messaging = null; }
+}
+
+async function registerFcmToken() {
+    if (!messaging || !DB || fcmToken) return;
+    try {
+        var swReg = await navigator.serviceWorker.ready;
+        var token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+        fcmToken = token;
+        await DB.ref('devices/' + getDeviceId()).set({
+            name: getDeviceName(),
+            fcmToken: token,
+            updatedAt: firebase.database.ServerValue.TIMESTAMP
+        });
+    } catch (e) { console.warn('FCM token error:', e); }
+}
+
+var SA_DB_PATH = 'config/serviceAccount';
+var cachedServiceAccount = null;
+async function getServiceAccount() {
+    if (cachedServiceAccount) return cachedServiceAccount;
+    if (!DB) throw new Error('No network');
+    var snap = await DB.ref(SA_DB_PATH).once('value');
+    var val = snap.val();
+    cachedServiceAccount = val && typeof val === 'object' ? val : null;
+    return cachedServiceAccount;
+}
+async function setServiceAccount(sa) {
+    if (!DB) throw new Error('No network');
+    await DB.ref(SA_DB_PATH).set(sa);
+    cachedServiceAccount = sa;
+}
+async function clearStoredServiceAccount() {
+    if (DB) await DB.ref(SA_DB_PATH).remove();
+    cachedServiceAccount = null;
+}
+
+function b64url(str) {
+    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function pemToBytes(pem) {
+    var b64 = pem.replace(/-----BEGIN PRIVATE KEY-----/, '').replace(/-----END PRIVATE KEY-----/, '').replace(/\s+/g, '');
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}
+async function signJwt(sa, nowSec) {
+    var header = { alg: 'RS256', typ: 'JWT' };
+    var claims = {
+        iss: sa.client_email,
+        scope: 'https://www.googleapis.com/auth/firebase.messaging',
+        aud: 'https://oauth2.googleapis.com/token',
+        iat: nowSec,
+        exp: nowSec + 3600
+    };
+    var data = b64url(JSON.stringify(header)) + '.' + b64url(JSON.stringify(claims));
+    var key = await crypto.subtle.importKey('pkcs8', pemToBytes(sa.private_key),
+        { name: 'RSASSA-PKCS1-v1_5', hash: { name: 'SHA-256' } }, false, ['sign']);
+    var sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(data));
+    var sigBytes = new Uint8Array(sig);
+    var bin = '';
+    for (var i = 0; i < sigBytes.length; i++) bin += String.fromCharCode(sigBytes[i]);
+    return data + '.' + b64url(bin);
+}
+async function getOAuthToken(sa) {
+    var jwt = await signJwt(sa, Math.floor(Date.now() / 1000));
+    var body = 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + encodeURIComponent(jwt);
+    var res = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body
+    });
+    var data = await res.json();
+    if (!data.access_token) throw new Error('OAuth failed: ' + (data.error_description || data.error || res.status));
+    return data.access_token;
+}
+async function fcmSend(token, title, body, dataObj) {
+    var sa = await getServiceAccount();
+    if (!sa) throw new Error('No service account configured. Paste it in Push Settings.');
+    var accessToken = await getOAuthToken(sa);
+    var msg = {
+        message: {
+            token: token,
+            data: dataObj || {},
+            android: { priority: 'high' },
+            webpush: { headers: { TTL: '7200' } }
+        }
+    };
+    var res = await fetch('https://fcm.googleapis.com/v1/projects/' + FB_CONFIG.projectId + '/messages:send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
+        body: JSON.stringify(msg)
+    });
+    if (!res.ok) throw new Error('FCM send failed: ' + res.status + ' ' + (await res.text()).slice(0, 300));
+    return true;
+}
+async function sendPushToDevice(peerId, title, body) {
+    if (!DB) throw new Error('No network');
+    var snap = await DB.ref('devices/' + peerId + '/fcmToken').once('value');
+    var tok = snap.val();
+    if (!tok) throw new Error('That device has not registered for push yet. Open QuickShare on it first.');
+    await fcmSend(tok, title, body, { peerId: peerId, type: 'quickshare', title: title, body: body });
+    return true;
+}
+
+// ---- push settings UI ----
+async function openSettings() {
+    showScreen('settings');
+    try {
+        var sa = await getServiceAccount();
+        $('sa-input').value = sa ? JSON.stringify(sa, null, 2) : '';
+        $('sa-status').textContent = sa ? 'Service account saved in your Firebase database.' : 'No service account saved yet.';
+        $('btn-sa-test').classList.toggle('hidden', !sa);
+    } catch (e) {
+        $('sa-input').value = '';
+        $('sa-status').textContent = 'Could not read database: ' + e.message;
+        $('btn-sa-test').classList.add('hidden');
+    }
+}
+async function saveServiceAccount() {
+    try {
+        var parsed = JSON.parse($('sa-input').value);
+        if (!parsed.client_email || !parsed.private_key) { $('sa-status').textContent = 'Missing client_email or private_key.'; return; }
+        await setServiceAccount(parsed);
+        $('sa-status').textContent = 'Saved to your Firebase database. You can now send push notifications.';
+        $('btn-sa-test').classList.remove('hidden');
+    } catch (e) { $('sa-status').textContent = 'Invalid JSON or DB error: ' + e.message; }
+}
+async function clearServiceAccount() {
+    try {
+        await clearStoredServiceAccount();
+        $('sa-input').value = '';
+        $('sa-status').textContent = 'Cleared from your Firebase database.';
+        $('btn-sa-test').classList.add('hidden');
+    } catch (e) { $('sa-status').textContent = 'Could not clear: ' + e.message; }
+}
+async function testPush() {
+    $('sa-status').textContent = 'Sending...';
+    try {
+        await sendPushToDevice(getDeviceId(), 'QuickShare Test', 'Push notifications are working');
+        $('sa-status').textContent = 'Sent! Check your notification.';
+    } catch (e) {
+        console.error(e);
+        $('sa-status').textContent = 'Failed: ' + e.message;
+    }
 }
 
 function showScreen(id) {
@@ -350,6 +564,7 @@ function tryConnect() {
     autoConnected = true;
     if (connTimer) { clearTimeout(connTimer); connTimer = null; }
     requestWakeLock();
+    startKeepAlive();
     showScreen('connected');
     notify('QuickShare', 'Connected to ' + (lastPeerName || 'your device'), 'granted', [80]);
     try { ctrlDC.send(JSON.stringify({ type: 'hello', deviceId: getDeviceId(), name: getDeviceName() })); } catch (e) {}
@@ -360,6 +575,7 @@ function tryConnect() {
 async function startHosting() {
     if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     requestNotificationPermission();
+    initKeepAlive();
     isHost = true;
     autoConnected = false;
     dataDCs = [];
@@ -436,6 +652,7 @@ async function hostGotAnswer(sdp) {
 function startJoining() {
     if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     requestNotificationPermission();
+    initKeepAlive();
     stopCurrentSignaling();
     showScreen('code');
     $('code-input').value = '';
@@ -851,6 +1068,7 @@ async function reconnectTo(peerId) {
     var peer = pairs[peerId];
     if (!peer) { renderRecent(); return; }
     lastPeerName = peer.name;
+    initKeepAlive();
 
     isHost = true;
     autoConnected = false;
@@ -886,7 +1104,20 @@ async function reconnectTo(peerId) {
             offer: pc.localDescription.sdp,
             createdAt: firebase.database.ServerValue.TIMESTAMP
         });
-        $('connect-status').textContent = 'Waking ' + peer.name + '...';
+
+        var pushSent = false;
+        try {
+            var tokSnap = await DB.ref('devices/' + peerId + '/fcmToken').once('value');
+            if (tokSnap.val()) {
+                await fcmSend(tokSnap.val(),
+                    getDeviceName() + ' wants to send files',
+                    'Tap to open QuickShare and connect',
+                    { peerId: peerId, type: 'quickshare', title: getDeviceName() + ' wants to send files', body: 'Tap to open QuickShare and connect' });
+                pushSent = true;
+            }
+        } catch (e) { console.warn('Push notify failed:', e); }
+
+        $('connect-status').textContent = pushSent ? 'Waking ' + peer.name + '... (push sent)' : 'Waking ' + peer.name + '...';
 
         currentReqRef.on('value', function(snap) {
             var v = snap.val();
@@ -910,11 +1141,13 @@ async function reconnectTo(peerId) {
 
         connTimer = setTimeout(function() {
             if (!reqAnswered) {
-                $('connect-status').textContent = 'Device not available. Make sure the other app is open, then try again.';
+                $('connect-status').textContent = pushSent
+                    ? 'Waiting for ' + peer.name + ' to open the app...'
+                    : 'Device not available. Make sure the other app is open, then try again.';
                 reconnecting = false;
                 setTimeout(function() { showScreen('home'); }, 2500);
             }
-        }, 20000);
+        }, pushSent ? 600000 : 20000);
     } catch (err) {
         console.error('Reconnect error:', err);
         reconnecting = false;
@@ -1037,6 +1270,7 @@ function disconnect() {
     _rxBatchStart = 0;
     resetProgressDisplay();
     releaseWakeLock();
+    stopKeepAlive();
     $('progress-section').classList.add('hidden');
     $('file-input').value = '';
     var empty = $('received-empty'), text = $('received-text');
@@ -1060,6 +1294,11 @@ function init() {
     $('code-input').addEventListener('input', function() { this.value = this.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 4); });
     $('btn-back-code').addEventListener('click', function() { showScreen('home'); });
     $('btn-copy-link').addEventListener('click', copyShareLink);
+    $('btn-settings').addEventListener('click', openSettings);
+    $('btn-back-settings').addEventListener('click', function() { showScreen('home'); });
+    $('btn-sa-save').addEventListener('click', saveServiceAccount);
+    $('btn-sa-clear').addEventListener('click', clearServiceAccount);
+    $('btn-sa-test').addEventListener('click', testPush);
 }
 
 if (document.readyState === 'loading') {
@@ -1081,7 +1320,19 @@ window.reconnectTo = reconnectTo;
     var dl = $('device-name-label');
     if (dl) dl.textContent = 'You are ' + getDeviceName();
     renderRecent();
+    initMessaging();
     listenForReconnectRequests();
+    registerFcmToken();
+    var armedKeepAlive = false;
+    function armKeepAlive() {
+        if (armedKeepAlive) return;
+        armedKeepAlive = true;
+        initKeepAlive();
+        startKeepAlive();
+    }
+    document.addEventListener('pointerdown', armKeepAlive);
+    document.addEventListener('touchstart', armKeepAlive);
+    document.addEventListener('keydown', armKeepAlive);
     document.addEventListener('visibilitychange', function() {
         if (state === 'connected' && document.visibilityState === 'visible') requestWakeLock();
     });
