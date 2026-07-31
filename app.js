@@ -34,8 +34,7 @@ var pendingChunks = {};
 var autoConnected = false;
 var avgThroughput = 0;
 var currentChunkSize = CHUNK_SIZE_BASE;
-var saveFolderHandle = null;
-var saveFolderName = '';
+
 var _txTotalBytes = 0;
 var _txSentBytes = 0;
 var _rxTotalBytes = 0;
@@ -204,9 +203,6 @@ function tryConnect() {
     autoConnected = true;
     playSound('granted');
     showScreen('connected');
-    if ('showDirectoryPicker' in window) {
-        $('btn-save-folder').classList.remove('hidden');
-    }
 }
 
 async function startHosting() {
@@ -406,22 +402,6 @@ function clearFiles() {
     renderSummary();
 }
 
-// ===================== SAVE FOLDER (FILE SYSTEM ACCESS API) =====================
-
-async function chooseSaveFolder() {
-    if (!('showDirectoryPicker' in window)) return;
-    try {
-        saveFolderHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        saveFolderName = saveFolderHandle.name;
-        $('btn-save-folder').classList.add('hidden');
-        var st = $('save-folder-status');
-        st.textContent = 'Saving to: ' + saveFolderName;
-        st.classList.remove('hidden');
-    } catch (e) {
-        // User cancelled or API not available
-    }
-}
-
 // ===================== SEND ENGINE =====================
 
 async function sendFiles() {
@@ -505,6 +485,7 @@ async function sendSingleFile(file, channelIndex) {
         var buf = await blob.arrayBuffer();
         dc.send(buf);
         _txSentBytes += buf.byteLength;
+        updateProgress(_txSentBytes / _txTotalBytes);
         offset = end;
         if (dc.bufferedAmount >= BUF_TARGET) await waitBufferDrain(dc);
     }
@@ -592,16 +573,10 @@ async function setupRecvStream(msg) {
         mimeType: msg.mimeType,
         totalChunks: msg.totalChunks,
         received: 0,
-        chunks: [],
-        writable: null,
-        streaming: false
+        chunks: []
     };
 
     _rxTotalBytes += msg.size;
-
-    if (saveFolderHandle) {
-        await trySaveToDisk(stream);
-    }
 
     if (pendingChunks[ci] && pendingChunks[ci].length > 0) {
         var pend = pendingChunks[ci];
@@ -628,27 +603,8 @@ async function setupRecvStream(msg) {
     updateProgress(_rxTotalBytes > 0 ? _rxReceivedBytes / _rxTotalBytes : 0);
 }
 
-async function trySaveToDisk(stream) {
-    try {
-        var fh = await saveFolderHandle.getFileHandle(stream.name, { create: true });
-        stream.writable = await fh.createWritable({ keepExistingData: false });
-        stream.streaming = true;
-    } catch (e) {
-        console.warn('File System Access write failed, falling back to memory:', e);
-    }
-}
-
 function writeChunk(stream, chunk) {
-    if (stream.streaming && stream.writable) {
-        try {
-            stream.writable.write(chunk);
-        } catch (e) {
-            stream.streaming = false;
-            stream.chunks.push(chunk);
-        }
-    } else {
-        stream.chunks.push(chunk);
-    }
+    stream.chunks.push(chunk);
 }
 
 function finalizeRecvStream(msg) {
@@ -656,12 +612,8 @@ function finalizeRecvStream(msg) {
     var stream = recvStreams[ci];
     if (!stream) return;
 
-    if (stream.streaming && stream.writable) {
-        try { stream.writable.close(); } catch (e) {}
-    } else {
-        var blob = new Blob(stream.chunks, { type: stream.mimeType });
-        dlBlob(blob, stream.name);
-    }
+    var blob = new Blob(stream.chunks, { type: stream.mimeType });
+    dlBlob(blob, stream.name);
 
     addReceived(stream.name, stream.size);
     delete recvStreams[ci];
@@ -761,8 +713,6 @@ function disconnect() {
     fileQueue = [];
     recvStreams = {};
     pendingChunks = {};
-    saveFolderHandle = null;
-    saveFolderName = '';
     avgThroughput = 0;
     currentChunkSize = CHUNK_SIZE_BASE;
     _rxTotalBytes = 0;
@@ -782,8 +732,6 @@ function disconnect() {
     var empty = $('received-empty'), text = $('received-text');
     if (empty) empty.classList.remove('hidden');
     if (text) text.classList.add('hidden');
-    $('btn-save-folder').classList.add('hidden');
-    $('save-folder-status').classList.add('hidden');
     showScreen('home');
 }
 
@@ -798,10 +746,6 @@ function init() {
     $('btn-send').addEventListener('click', sendFiles);
     $('btn-clear-files').addEventListener('click', clearFiles);
     $('btn-disconnect').addEventListener('click', disconnect);
-    var sfBtn = $('btn-save-folder');
-    if (sfBtn && 'showDirectoryPicker' in window) {
-        sfBtn.addEventListener('click', chooseSaveFolder);
-    }
 }
 
 if (document.readyState === 'loading') {
@@ -817,8 +761,6 @@ window.startJoining = startJoining;
 window.selectFiles = selectFiles;
 window.sendFiles = sendFiles;
 window.disconnect = disconnect;
-window.chooseSaveFolder = chooseSaveFolder;
-
 try {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').catch(function() {});
