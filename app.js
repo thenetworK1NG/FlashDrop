@@ -35,6 +35,7 @@ var _txTotalBytes = 0;
 var _txSentBytes = 0;
 var _rxTotalBytes = 0;
 var _rxReceivedBytes = 0;
+var _bgProgressTimer = 0;
 var _receivedCount = 0;
 var _receivedBytes = 0;
 var _txStart = 0;
@@ -208,10 +209,21 @@ function requestNotificationPermission() {
         if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission().then(function(p) {
                 if (p === 'granted') registerFcmToken();
+                updateNotifHint();
             }).catch(function() {});
         } else if ('Notification' in window && Notification.permission === 'granted') {
             registerFcmToken();
+            updateNotifHint();
         }
+    } catch (e) {}
+}
+
+function updateNotifHint() {
+    try {
+        var b = $('btn-notif-blocked');
+        if (!b) return;
+        var blocked = 'Notification' in window && Notification.permission === 'denied';
+        b.classList.toggle('hidden', !blocked);
     } catch (e) {}
 }
 
@@ -252,7 +264,7 @@ function buildKeepAliveSource(ctx) {
     var len = ctx.sampleRate * 6;
     var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
     var data = buffer.getChannelData(0);
-    for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.5;
+    for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.2;
     var src = ctx.createBufferSource();
     src.buffer = buffer;
     src.loop = true;
@@ -266,7 +278,7 @@ function initKeepAlive() {
         var ctx = new AC();
         var src = buildKeepAliveSource(ctx);
         var gain = ctx.createGain();
-        gain.gain.value = 0.1;
+        gain.gain.value = 0.04;
         src.connect(gain);
         gain.connect(ctx.destination);
         keepAlive = { ctx: ctx, src: src, gain: gain, rate: ctx.sampleRate };
@@ -782,6 +794,7 @@ async function sendFiles() {
 
     requestWakeLock();
     startKeepAlive();
+    startBgProgress();
 
     const files = [...fileQueue];
     fileQueue = [];
@@ -829,6 +842,7 @@ async function sendFiles() {
     var elapsed = (Date.now() - _txStart) / 1000;
     var speed = elapsed > 0 ? (_txTotalBytes * 8) / elapsed : 0;
     ctrlDC.send(JSON.stringify({ type: 'transfer-complete', elapsed: elapsed, speed: speed }));
+    stopBgProgress();
     playSound('sent');
     notify('Transfer Complete', files.length + ' file' + (files.length !== 1 ? 's' : '') + ' sent to ' + (lastPeerName || 'device'), 'sent', [200, 100, 200]);
     showSuccess(elapsed, speed);
@@ -905,6 +919,7 @@ async function handleCtrlMsg(data) {
             break;
 
         case 'transfer-complete':
+            stopBgProgress();
             if (_rxBatchStart) {
                 var rxElapsed = (Date.now() - _rxBatchStart) / 1000;
                 var rxSpeed = rxElapsed > 0 ? (_rxReceivedBytes * 8) / rxElapsed : 0;
@@ -956,6 +971,7 @@ async function setupRecvStream(msg) {
     };
 
     _rxTotalBytes += msg.size;
+    startBgProgress();
 
     if (pendingChunks[ci] && pendingChunks[ci].length > 0) {
         var pend = pendingChunks[ci];
@@ -1041,6 +1057,25 @@ function updateProgress(fraction) {
     if (r) r.style.height = pct + '%';
     var pr = $('pct-receiver');
     if (pr) pr.textContent = pct + '%';
+}
+
+// While the page is hidden/locked, the UI cannot paint, so report progress
+// via a system notification every 10 seconds instead.
+function startBgProgress() {
+    if (_bgProgressTimer) return;
+    _bgProgressTimer = setInterval(function() {
+        try {
+            if (document.visibilityState !== 'hidden') return;
+            var total = _txTotalBytes > 0 ? _txTotalBytes : _rxTotalBytes;
+            var got = _txTotalBytes > 0 ? _txSentBytes : _rxReceivedBytes;
+            if (!total || got <= 0 || got >= total) return;
+            var pct = Math.min(99, Math.round((got / total) * 100));
+            notify('QuickShare', (_txTotalBytes > 0 ? 'Sending' : 'Receiving') + ' ' + pct + '%', null, null);
+        } catch (e) {}
+    }, 10000);
+}
+function stopBgProgress() {
+    if (_bgProgressTimer) { clearInterval(_bgProgressTimer); _bgProgressTimer = 0; }
 }
 
 function showSuccess(elapsed, speed) {
@@ -1320,6 +1355,8 @@ function init() {
     $('btn-sa-save').addEventListener('click', saveServiceAccount);
     $('btn-sa-clear').addEventListener('click', clearServiceAccount);
     $('btn-sa-test').addEventListener('click', testPush);
+    var notifBtn = $('btn-notif-blocked');
+    if (notifBtn) notifBtn.addEventListener('click', requestNotificationPermission);
 }
 
 if (document.readyState === 'loading') {
@@ -1344,6 +1381,10 @@ window.reconnectTo = reconnectTo;
     initMessaging();
     listenForReconnectRequests();
     registerFcmToken();
+    updateNotifHint();
+    if ('Notification' in window && window.Notification && typeof window.Notification.addEventListener === 'function') {
+        window.Notification.addEventListener('permissionchange', updateNotifHint);
+    }
     var armedKeepAlive = false;
     function armKeepAlive() {
         if (armedKeepAlive) return;
@@ -1355,6 +1396,7 @@ window.reconnectTo = reconnectTo;
     document.addEventListener('touchstart', armKeepAlive);
     document.addEventListener('keydown', armKeepAlive);
     document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') updateNotifHint();
         if (state === 'connected') {
             if (document.visibilityState === 'visible') {
                 requestWakeLock();
