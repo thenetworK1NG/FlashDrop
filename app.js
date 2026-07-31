@@ -357,6 +357,7 @@ async function sendFiles() {
     $('btn-send').classList.add('hidden');
     $('progress-section').classList.remove('hidden');
     resetProgressDisplay();
+    setProgressRole(true);
     // Reset progress circles
     var sFill = $('liquid-sender'), rFill = $('liquid-receiver');
     if (sFill) sFill.style.height = '100%';
@@ -461,6 +462,7 @@ function handleMsg(data) {
                     };
                     $('progress-section').classList.remove('hidden');
                     resetProgressDisplay();
+                    setProgressRole(false);
                     // Reset receiver circle, sender stays full
                     var rf = $('liquid-receiver');
                     if (rf) rf.style.height = '0%';
@@ -554,11 +556,25 @@ function showSuccess(elapsed, speed) {
     }, 480);
 }
 
+function setProgressRole(sending) {
+    var s = $('circle-sender'), r = $('circle-receiver'), a = document.querySelector('.liquid-arrow');
+    if (!s || !r) return;
+    if (sending) {
+        s.style.display = ''; r.style.display = 'none';
+        if (a) a.style.display = 'none';
+    } else {
+        s.style.display = 'none'; r.style.display = '';
+        if (a) a.style.display = 'none';
+    }
+}
+
 function resetProgressDisplay() {
     var wrap = document.querySelector('.liquid-wrap');
     if (wrap) { wrap.classList.remove('fade-out'); wrap.style.opacity = ''; wrap.style.transform = ''; }
     var notif = $('success-notification');
     if (notif) notif.classList.remove('show');
+    var s = $('circle-sender'), r = $('circle-receiver'), a = document.querySelector('.liquid-arrow');
+    if (s) s.style.display = ''; if (r) r.style.display = ''; if (a) a.style.display = '';
 }
 
 function disconnect() {
