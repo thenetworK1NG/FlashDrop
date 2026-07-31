@@ -548,12 +548,16 @@ function fmtDuration(sec) {
 function showSuccess(elapsed, speed) {
     var wrap = document.querySelector('.liquid-wrap');
     if (wrap) wrap.classList.add('fade-out');
-    $('progress-label').textContent = '';
-    setTimeout(function() {
-        $('success-time').textContent = fmtDuration(elapsed);
-        $('success-speed').textContent = fmtSpeed(speed);
-        $('success-notification').classList.add('show');
-    }, 480);
+    var label = $('progress-label');
+    if (label) label.textContent = '';
+    var t = $('success-time'), sp = $('success-speed'), n = $('success-notification');
+    if (t) t.textContent = fmtDuration(elapsed);
+    if (sp) sp.textContent = fmtSpeed(speed);
+    if (n) {
+        n.classList.add('delayed');
+        void n.offsetHeight; // force reflow so transition-delay takes effect
+        n.classList.add('show');
+    }
 }
 
 function setProgressRole(sending) {
@@ -572,7 +576,7 @@ function resetProgressDisplay() {
     var wrap = document.querySelector('.liquid-wrap');
     if (wrap) { wrap.classList.remove('fade-out'); wrap.style.opacity = ''; wrap.style.transform = ''; }
     var notif = $('success-notification');
-    if (notif) notif.classList.remove('show');
+    if (notif) { notif.classList.remove('show', 'delayed'); }
     var s = $('circle-sender'), r = $('circle-receiver'), a = document.querySelector('.liquid-arrow');
     if (s) s.style.display = ''; if (r) r.style.display = ''; if (a) a.style.display = '';
 }
