@@ -52,12 +52,11 @@ header p{color:var(--text-muted);font-size:.9rem}
 .empty-state{color:var(--text-muted);text-align:center;padding:20px;font-size:.9rem;width:100%}
 .received-summary{text-align:center;color:var(--text-muted);font-size:.85rem;padding:8px 0;width:100%}
 .received-summary .hit{color:var(--accent);font-weight:600}
-.progress-box{width:100%;max-width:400px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
+.progress-box{position:relative;width:100%;max-width:400px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
 .progress-box .label{font-size:.9rem;margin-bottom:8px;word-break:break-all;text-align:center}
 .liquid-wrap.fade-out{opacity:0;transform:scale(.92);transition:opacity .45s ease,transform .45s ease;pointer-events:none}
-@keyframes popIn{0%{opacity:0;transform:scale(.8)}60%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
-.success-notification{display:none;flex-direction:column;align-items:center;gap:4px;padding:16px 16px 8px}
-.success-notification.show{display:flex;animation:popIn .5s ease}
+.success-notification{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%) scale(.9);display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .4s ease,transform .4s ease,visibility 0s .4s}
+.success-notification.show{opacity:1;visibility:visible;transform:translateY(-50%) scale(1);pointer-events:auto;transition:opacity .4s ease,transform .4s ease,visibility 0s 0s}
 .success-notification .check{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#2ea043,#3fb950);display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;margin-bottom:8px;box-shadow:0 0 24px rgba(63,185,80,.25)}
 .success-notification .main{font-size:1.05rem;font-weight:600;color:var(--text)}
 .success-notification .time{font-size:2.2rem;font-weight:700;color:var(--accent);letter-spacing:-.02em;line-height:1.2}
