@@ -33,6 +33,19 @@ header p{color:var(--text-muted);font-size:.9rem}
 .btn-text{background:transparent;color:var(--text-muted);padding:12px}
 .btn-text:hover{color:var(--text)}
 .btn-small{background:transparent;border:none;color:var(--text-muted);cursor:pointer;padding:4px 8px;font-size:1rem}
+.device-label{font-size:.75rem;color:var(--text-muted);margin-top:28px;text-align:center}
+.room-code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:2.8rem;font-weight:800;letter-spacing:.3em;text-indent:.3em;color:var(--primary);background:var(--surface);border:1px dashed var(--border);border-radius:16px;padding:14px 10px;width:100%;max-width:280px;text-align:center}
+.code-input{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:2.2rem;font-weight:700;letter-spacing:.45em;text-indent:.45em;text-align:center;text-transform:uppercase;background:var(--surface);border:1px solid var(--border);border-radius:14px;color:var(--text);padding:16px 12px;width:100%;max-width:280px;outline:none}
+.code-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+.recent-section{width:100%;max-width:400px;margin-top:28px}
+.recent-section h3{font-size:.75rem;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.1em}
+.recent-list{display:flex;flex-direction:column;gap:8px}
+.recent-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;width:100%}
+.recent-info{flex:1;min-width:0}
+.recent-name{font-size:.9rem;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.recent-time{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+.reconnect-btn{background:linear-gradient(135deg,#58a6ff,#1f6feb);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:600;cursor:pointer;flex-shrink:0;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+.reconnect-btn:active{transform:scale(.95)}
 .hidden{display:none!important}
 .hero{text-align:center;padding:40px 0}
 .hero .icon{font-size:4rem;margin-bottom:16px}
@@ -93,16 +106,35 @@ header p{color:var(--text-muted);font-size:.9rem}
 <button id="btn-host" class="btn btn-primary" onclick="startHosting()">📤 Send Files</button>
 <button id="btn-join" class="btn btn-secondary" onclick="startJoining()">📥 Receive Files</button>
 </div>
+
+<div id="recent-section" class="recent-section hidden">
+<h3>Recent Devices</h3>
+<div id="recent-list" class="recent-list"></div>
+</div>
+
+<p class="device-label" id="device-name-label"></p>
 </div>
 
 <!-- HOSTING -->
 <div id="screen-hosting" class="screen">
 <h2>Your Share Code</h2>
-<p class="status">Ask your friend to scan this QR code</p>
+<div class="room-code" id="host-code">····</div>
+<p class="status">Share this code, or have your friend scan the QR</p>
 <div class="qr-wrap" id="qrcode-host"></div>
 <p class="status" id="host-status">Generating...</p>
+<button id="btn-copy-link" class="btn btn-text hidden">🔗 Copy Share Link</button>
 <button id="btn-scan-answer" class="btn btn-primary hidden">📷 Scan Their Reply</button>
 <button id="btn-back-host" class="btn btn-text">Cancel</button>
+</div>
+
+<!-- ENTER CODE -->
+<div id="screen-code" class="screen">
+<h2>Enter Share Code</h2>
+<p class="status">Type the 4-letter code from the sender</p>
+<input id="code-input" class="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="····">
+<button id="btn-connect-code" class="btn btn-primary">Connect</button>
+<button id="btn-scan-qr" class="btn btn-text">📷 Scan QR Instead</button>
+<button id="btn-back-code" class="btn btn-text">Back</button>
 </div>
 
 <!-- SCANNING -->
@@ -178,6 +210,8 @@ header p{color:var(--text-muted);font-size:.9rem}
 </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>console.log('Pre-check: qrcode=' + (typeof qrcode) + ' jsQR=' + (typeof jsQR) + ' app.js loading...');</script>

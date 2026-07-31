@@ -1,4 +1,4 @@
-const CACHE = 'quickshare-v1';
+const CACHE = 'quickshare-v2';
 const URLS = ['.', 'index.html', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
