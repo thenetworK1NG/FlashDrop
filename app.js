@@ -45,6 +45,11 @@ var _throttleTimer = 0;
 var _linkCallbacks = [];
 var _jarvisAutoDone = false;
 var _jarvisTargetId = null;
+var _incomingFiles = [];
+
+function isJarvisDevice(d) {
+    return !!(d && (d.isJarvis || (d.username && normalizeUsername(d.username) === 'jarvis')));
+}
 
 function $(id) { return document.getElementById(id); }
 
@@ -356,7 +361,7 @@ function findJarvisDevice() {
     for (var i = 0; i < keys.length; i++) {
         var d = onlineDevices[keys[i]];
         if (!d || d.isSelf || !d.online) continue;
-        if (d.isJarvis) return d;
+        if (isJarvisDevice(d)) return d;
     }
     return null;
 }
@@ -421,7 +426,7 @@ function renderDevices() {
         var nm = document.createElement('div');
         nm.className = 'recent-name';
         nm.textContent = (d.label || d.username || 'Device') + (d.isSelf ? '  \u00b7  you' : '');
-        if (d.isJarvis && !d.isSelf) {
+        if (isJarvisDevice(d) && !d.isSelf) {
             var badge = document.createElement('span');
             badge.className = 'jarvis-badge';
             badge.textContent = 'J.A.R.V.I.S.';
@@ -439,8 +444,8 @@ function renderDevices() {
             btn.className = 'reconnect-btn';
             btn.textContent = 'Connect';
             btn.addEventListener('click', function() {
-                _jarvisTargetId = d.isJarvis ? d.deviceId : null;
-                connectToDevice(d.deviceId, d.isJarvis ? 'J.A.R.V.I.S.' : (d.label || d.username || 'device'));
+                _jarvisTargetId = isJarvisDevice(d) ? d.deviceId : null;
+                connectToDevice(d.deviceId, isJarvisDevice(d) ? 'J.A.R.V.I.S.' : (d.label || d.username || 'device'));
             });
             row.appendChild(btn);
         } else {
@@ -954,13 +959,38 @@ function finalizeRecvStream(msg) {
     if (!stream) return;
 
     var blob = new Blob(stream.chunks, { type: stream.mimeType });
+    _incomingFiles.push({ blob: blob, name: stream.name });
     doDownload(blob, stream.name);
 
     addReceived(stream.name, stream.size);
+    renderSaveButton();
     delete recvStreams[ci];
 
     $('progress-label').textContent = 'Received ' + stream.name;
     updateProgress(_rxTotalBytes > 0 ? _rxReceivedBytes / _rxTotalBytes : 1);
+}
+
+function renderSaveButton() {
+    var b = $('btn-save-received');
+    if (!b) return;
+    if (_incomingFiles.length) {
+        b.classList.remove('hidden');
+        b.textContent = 'Save ' + _incomingFiles.length + ' received file' + (_incomingFiles.length !== 1 ? 's' : '');
+    } else {
+        b.classList.add('hidden');
+    }
+}
+
+function saveReceived() {
+    for (var i = 0; i < _incomingFiles.length; i++) {
+        doDownload(_incomingFiles[i].blob, _incomingFiles[i].name);
+    }
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
 }
 
 function doDownload(blob, name) {
@@ -1248,6 +1278,8 @@ function disconnect() {
     _receivedCount = 0;
     _receivedBytes = 0;
     _rxBatchStart = 0;
+    _incomingFiles = [];
+    renderSaveButton();
     resetProgressDisplay();
     releaseWakeLock();
     stopKeepAlive();
@@ -1269,6 +1301,8 @@ function init() {
     $('btn-send').addEventListener('click', sendFiles);
     $('btn-clear-files').addEventListener('click', clearFiles);
     $('btn-disconnect').addEventListener('click', disconnect);
+    var saveBtn = $('btn-save-received');
+    if (saveBtn) saveBtn.addEventListener('click', saveReceived);
     $('btn-login').addEventListener('click', doLogin);
     $('login-password').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
     $('btn-show-register').addEventListener('click', function() { showScreen('register'); });
