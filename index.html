@@ -46,6 +46,10 @@ header p{color:var(--text-muted);font-size:.9rem}
 .recent-time{font-size:.72rem;color:var(--text-muted);margin-top:2px}
 .reconnect-btn{background:linear-gradient(135deg,#58a6ff,#1f6feb);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:600;cursor:pointer;flex-shrink:0;-webkit-user-select:none;user-select:none;touch-action:manipulation}
 .reconnect-btn:active{transform:scale(.95)}
+.recent-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.rename-btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:8px 11px;border-radius:8px;font-size:.85rem;cursor:pointer;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+.rename-btn:active{transform:scale(.95)}
+.rename-btn:hover{color:var(--text);border-color:var(--primary)}
 .sa-input{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px;font-size:.7rem;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;resize:vertical;outline:none}
 .sa-input:focus{border-color:var(--primary)}
 .settings-row{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:400px}
@@ -92,6 +96,14 @@ header p{color:var(--text-muted);font-size:.9rem}
 .step{display:flex;align-items:flex-start;gap:12px;width:100%;max-width:400px}
 .step p{flex:1;font-size:.9rem;color:var(--text-muted);line-height:1.4}
 @media(min-width:768px){#app{padding-top:32px}.btn{max-width:400px}}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
+.overlay-card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.overlay-card h3{color:var(--text);font-size:1.1rem;font-weight:600}
+#rename-current{font-size:.8rem;word-break:break-word}
+#rename-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px 14px;font-size:.95rem;outline:none}
+#rename-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+.overlay-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center}
+.overlay-actions .btn-text{width:auto;padding:12px 10px}
 </style>
 </head>
 <body>
@@ -204,6 +216,19 @@ header p{color:var(--text-muted);font-size:.9rem}
 <h2>Connecting...</h2>
 <p class="status" id="connect-status">Setting up secure connection</p>
 <div style="margin:20px;font-size:3rem;animation:pulse 1s infinite">⟳</div>
+</div>
+</div>
+
+<!-- RENAME DEVICE -->
+<div id="rename-overlay" class="overlay hidden">
+<div class="overlay-card">
+<h3>Rename Device</h3>
+<p class="status" id="rename-current"></p>
+<input id="rename-input" type="text" maxlength="40" placeholder="Device name" autocomplete="off">
+<div class="overlay-actions">
+<button id="btn-rename-cancel" class="btn btn-text">Cancel</button>
+<button id="btn-rename-save" class="btn btn-primary" style="width:auto;padding:10px 24px">Save</button>
+</div>
 </div>
 </div>
 
