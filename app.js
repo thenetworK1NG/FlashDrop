@@ -102,28 +102,20 @@ function getDeviceName() {
     return DEVICE_NAME;
 }
 
-// ---- accounts (username / password) ----
+// ---- whitelist accounts (whitelist.json on the J.A.R.V.I.S. server) ----
+// The app never stores accounts itself: the whitelist lives in a JSON file on
+// the J.A.R.V.I.S. server and login is checked there. Any device that signs in
+// with a whitelisted account can connect to every other whitelisted device
+// instantly - no share codes, no portals.
+
+function apiBase() {
+    return location.origin;
+}
+
 function normalizeUsername(u) {
     return (u || '').trim().toLowerCase();
 }
-function genSalt() {
-    var arr = new Uint8Array(16);
-    crypto.getRandomValues(arr);
-    var s = '';
-    for (var i = 0; i < arr.length; i++) s += arr[i].toString(16).padStart(2, '0');
-    return s;
-}
-function toHex(bytes) {
-    var s = '';
-    for (var i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
-    return s;
-}
-async function hashPassword(password, salt) {
-    var enc = new TextEncoder();
-    var key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-    var bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' }, key, 256);
-    return toHex(new Uint8Array(bits));
-}
+
 function getSessionUser() {
     try { return localStorage.getItem('qs.username'); } catch (e) { return null; }
 }
@@ -133,49 +125,78 @@ function setSessionUser(u) {
 function clearSessionUser() {
     try { localStorage.removeItem('qs.username'); } catch (e) {}
 }
-async function registerUser(username, password) {
-    if (!DB) throw new Error('No network available.');
-    var name = username.trim();
-    if (!name) throw new Error('Username cannot be empty.');
-    if (password.length < 4) throw new Error('Password must be at least 4 characters.');
-    var key = normalizeUsername(name);
-    var snap = await DB.ref('users/' + key).once('value');
-    if (snap.exists()) throw new Error('That username is already taken.');
-    var salt = genSalt();
-    var hash = await hashPassword(password, salt);
-    await DB.ref('users/' + key).set({
-        username: name,
-        salt: salt,
-        hash: hash,
-        createdAt: firebase.database.ServerValue.TIMESTAMP
+function getWhitelistUsers() {
+    try {
+        var arr = JSON.parse(localStorage.getItem('qs.whitelistUsers') || '[]');
+        return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+}
+function setWhitelistUsers(arr) {
+    try { localStorage.setItem('qs.whitelistUsers', JSON.stringify(arr)); } catch (e) {}
+}
+
+async function whitelistLogin(username, password) {
+    var res;
+    try {
+        res = await fetch(apiBase() + '/api/wetransfer/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username, password: password })
+        });
+    } catch (e) {
+        throw new Error('Can\'t reach the J.A.R.V.I.S. login server. Open this page from the J.A.R.V.I.S. server, not a plain file server.');
+    }
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+        if (res.status === 501 || res.status === 405 || res.status === 404) {
+            throw new Error('No login server here \u2014 open QuickShare from J.A.R.V.I.S. (http://<your-pc>:8001/wetransfer/ or port 5001).');
+        }
+        throw new Error(data.error || 'Login failed.');
+    }
+    return data.username || username;
+}
+
+async function whitelistAdd(username, password) {
+    var res = await fetch(apiBase() + '/api/wetransfer/whitelist/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
     });
-    return name;
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Could not add the account.');
+    return data.username || username;
 }
-async function loginUser(username, password) {
-    if (!DB) throw new Error('No network available.');
-    var key = normalizeUsername(username);
-    var snap = await DB.ref('users/' + key).once('value');
-    var user = snap.val();
-    if (!user || !user.salt || !user.hash) throw new Error('Invalid username or password.');
-    var hash = await hashPassword(password, user.salt);
-    if (hash !== user.hash) throw new Error('Invalid username or password.');
-    return user.username || key;
+
+function loadWhitelistUsers() {
+    return fetch(apiBase() + '/api/wetransfer/whitelist')
+        .then(function(res) { return res.json().catch(function() { return {}; }); })
+        .then(function(data) {
+            if (data && data.ok && Array.isArray(data.users)) {
+                setWhitelistUsers(data.users);
+                return data.users;
+            }
+            return getWhitelistUsers();
+        })
+        .catch(function() { return getWhitelistUsers(); });
 }
+
 function doLogin() {
     var u = $('login-username').value.trim();
     var p = $('login-password').value;
     var st = $('login-status');
     if (!u || !p) { st.textContent = 'Enter your username and password.'; return; }
     st.textContent = 'Signing in...';
-    loginUser(u, p).then(function(name) {
+    whitelistLogin(u, p).then(function(name) {
         DEVICE_NAME = name;
         setSessionUser(name);
+        loadWhitelistUsers();
         startApp();
     }).catch(function(e) {
         st.textContent = e.message;
     });
 }
-function doRegister() {
+
+function doAddDevice() {
     var u = $('reg-username').value.trim();
     var p = $('reg-password').value;
     var p2 = $('reg-password2').value;
@@ -183,17 +204,20 @@ function doRegister() {
     if (!u || !p) { st.textContent = 'Enter a username and password.'; return; }
     if (p !== p2) { st.textContent = 'Passwords do not match.'; return; }
     if (p.length < 4) { st.textContent = 'Password must be at least 4 characters.'; return; }
-    st.textContent = 'Creating account...';
-    registerUser(u, p).then(function(name) {
+    st.textContent = 'Adding to whitelist...';
+    whitelistAdd(u, p).then(function(name) {
         DEVICE_NAME = name;
         setSessionUser(name);
+        loadWhitelistUsers();
         startApp();
     }).catch(function(e) {
         st.textContent = e.message;
     });
 }
+
 function doLogout() {
     if (state === 'connected') disconnect();
+    stopPresence();
     clearSessionUser();
     DEVICE_NAME = null;
     $('login-username').value = '';
@@ -204,98 +228,151 @@ function doLogout() {
     showScreen('login');
 }
 
-// ---- remembered devices (pairs) ----
-var PAIRS_KEY = 'qs.pairs';
-function getPairs() {
-    try { return JSON.parse(localStorage.getItem(PAIRS_KEY)) || {}; } catch (e) { return {}; }
+// ---- presence / auto-discovery (whitelisted devices online right now) ----
+// Every logged-in device announces itself under presence/<username>/<deviceId>.
+// Devices listen to that node and see one another instantly, so there is no
+// need to set up a portal or share a code before sharing files.
+
+var onlineDevices = {};
+var _presenceTimer = 0;
+
+function deviceShort() {
+    return getDeviceId().slice(0, 4).toUpperCase();
 }
-function savePairs(p) { try { localStorage.setItem(PAIRS_KEY, JSON.stringify(p)); } catch (e) {} }
-function recordPair(peerId, name) {
-    if (!peerId || peerId === getDeviceId()) return;
-    var pairs = getPairs();
-    pairs[peerId] = { peerId: peerId, name: name || 'Unknown device', lastConnected: Date.now() };
-    savePairs(pairs);
-    renderRecent();
+function presenceName() {
+    var u = getSessionUser();
+    return u ? (u + ' \u00b7 ' + deviceShort()) : deviceShort();
 }
+
+function publishPresence() {
+    if (!DB) return;
+    var userKey = normalizeUsername(getSessionUser());
+    if (!userKey) return;
+    var ref = DB.ref('presence/' + userKey + '/' + getDeviceId());
+    try {
+        ref.onDisconnect().set({
+            username: getSessionUser(), name: presenceName(),
+            deviceId: getDeviceId(), online: false
+        });
+    } catch (e) {}
+    ref.set({
+        username: getSessionUser(), name: presenceName(),
+        deviceId: getDeviceId(), online: true,
+        lastSeen: firebase.database.ServerValue.TIMESTAMP
+    });
+}
+
+function heartbeatPresence() {
+    if (!DB) return;
+    var userKey = normalizeUsername(getSessionUser());
+    if (!userKey) return;
+    DB.ref('presence/' + userKey + '/' + getDeviceId()).update({
+        online: true,
+        lastSeen: firebase.database.ServerValue.TIMESTAMP
+    });
+}
+
+function stopPresence() {
+    if (_presenceTimer) { clearInterval(_presenceTimer); _presenceTimer = 0; }
+    if (!DB) return;
+    var userKey = normalizeUsername(getSessionUser());
+    if (!userKey) return;
+    try { DB.ref('presence/' + userKey + '/' + getDeviceId()).set({ online: false }); } catch (e) {}
+}
+
 function formatTimeAgo(ts) {
+    if (!ts) return 'online';
     var diff = Date.now() - ts;
     if (diff < 60000) return 'just now';
     if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
     if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
     return Math.floor(diff / 86400000) + 'd ago';
 }
-function renderRecent() {
-    var sec = $('recent-section'), wrap = $('recent-list');
+
+function renderDevices() {
+    var sec = $('device-section'), wrap = $('device-list');
     if (!sec || !wrap) return;
-    var pairs = getPairs();
-    var keys = Object.keys(pairs);
-    if (keys.length === 0) { sec.classList.add('hidden'); return; }
+    var whitelist = getWhitelistUsers();
+    var items = [];
+    Object.keys(onlineDevices).forEach(function(id) {
+        var d = onlineDevices[id];
+        if (!d || !d.online) return;
+        if (whitelist.length > 0 && whitelist.indexOf((d.username || '').toLowerCase()) === -1) return;
+        d.isSelf = (id === getDeviceId());
+        items.push(d);
+    });
+    items.sort(function(a, b) { return (b.lastSeen || 0) - (a.lastSeen || 0); });
+    if (items.length === 0) { sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
     wrap.innerHTML = '';
-    keys.sort(function(a, b) { return pairs[b].lastConnected - pairs[a].lastConnected; });
-    for (var i = 0; i < keys.length; i++) {
-        (function(p) {
-            var row = document.createElement('div');
-            row.className = 'recent-row';
-            var info = document.createElement('div');
-            info.className = 'recent-info';
-            var nm = document.createElement('div');
-            nm.className = 'recent-name';
-            nm.textContent = p.name;
-            var tm = document.createElement('div');
-            tm.className = 'recent-time';
-            tm.textContent = 'Connected ' + formatTimeAgo(p.lastConnected);
-            info.appendChild(nm);
-            info.appendChild(tm);
-            var btnGrp = document.createElement('div');
-            btnGrp.className = 'recent-actions';
-            var renameBtn = document.createElement('button');
-            renameBtn.className = 'reconnect-btn rename-btn';
-            renameBtn.textContent = '✎';
-            renameBtn.title = 'Rename device';
-            renameBtn.setAttribute('aria-label', 'Rename ' + p.name);
-            renameBtn.addEventListener('click', function() { renamePair(p.peerId); });
+    var others = 0;
+    items.forEach(function(d) {
+        var row = document.createElement('div');
+        row.className = 'recent-row';
+        if (d.isSelf) row.classList.add('self-device');
+        var info = document.createElement('div');
+        info.className = 'recent-info';
+        var nm = document.createElement('div');
+        nm.className = 'recent-name';
+        nm.textContent = (d.label || d.username || 'Device') + (d.isSelf ? '  \u00b7  you' : '');
+        var tm = document.createElement('div');
+        tm.className = 'recent-time';
+        tm.textContent = (d.username || '') + ' \u00b7 ' + formatTimeAgo(d.lastSeen);
+        info.appendChild(nm);
+        info.appendChild(tm);
+        row.appendChild(info);
+        if (!d.isSelf) {
+            others++;
             var btn = document.createElement('button');
             btn.className = 'reconnect-btn';
             btn.textContent = 'Connect';
-            btn.addEventListener('click', function() { reconnectTo(p.peerId); });
-            btnGrp.appendChild(renameBtn);
-            btnGrp.appendChild(btn);
-            row.appendChild(info);
-            row.appendChild(btnGrp);
-            wrap.appendChild(row);
-        })(pairs[keys[i]]);
+            btn.addEventListener('click', function() {
+                connectToDevice(d.deviceId, d.label || d.username || 'device');
+            });
+            row.appendChild(btn);
+        } else {
+            var tag = document.createElement('div');
+            tag.className = 'recent-time';
+            tag.textContent = 'ready';
+            tag.style.alignSelf = 'center';
+            row.appendChild(tag);
+        }
+        wrap.appendChild(row);
+    });
+    if (others === 0) {
+        var hint = document.createElement('div');
+        hint.className = 'recent-time';
+        hint.style.padding = '8px 2px';
+        hint.textContent = 'No other whitelisted devices online yet. Sign in on another device and it shows up here automatically.';
+        wrap.appendChild(hint);
     }
 }
 
-// ---- rename remembered device ----
-var renamingPeerId = null;
-function renamePair(peerId) {
-    var pairs = getPairs();
-    var peer = pairs[peerId];
-    if (!peer) return;
-    renamingPeerId = peerId;
-    $('rename-current').textContent = 'Current name: ' + peer.name;
-    $('rename-input').value = peer.name;
-    $('rename-overlay').classList.remove('hidden');
-    setTimeout(function() { try { $('rename-input').focus(); $('rename-input').select(); } catch (e) {} }, 60);
-}
-function saveRename() {
-    if (!renamingPeerId) return;
-    var name = $('rename-input').value.trim();
-    if (name) {
-        var pairs = getPairs();
-        if (pairs[renamingPeerId]) {
-            pairs[renamingPeerId].name = name;
-            savePairs(pairs);
+function listenForPresence() {
+    if (!DB) return;
+    DB.ref('presence/').on('value', function(snap) {
+        var data = snap.val();
+        var next = {};
+        if (data && typeof data === 'object') {
+            Object.keys(data).forEach(function(uKey) {
+                var byDev = data[uKey];
+                if (!byDev || typeof byDev !== 'object') return;
+                Object.keys(byDev).forEach(function(devId) {
+                    var e = byDev[devId];
+                    if (!e) return;
+                    next[devId] = {
+                        deviceId: devId,
+                        username: e.username || uKey,
+                        label: e.name || e.username || devId,
+                        lastSeen: (typeof e.lastSeen === 'number' ? e.lastSeen : Date.now()),
+                        online: !!e.online
+                    };
+                });
+            });
         }
-    }
-    cancelRename();
-    renderRecent();
-}
-function cancelRename() {
-    renamingPeerId = null;
-    $('rename-overlay').classList.add('hidden');
+        onlineDevices = next;
+        renderDevices();
+    });
 }
 
 // ---- signaling state ----
@@ -308,24 +385,6 @@ var reqAnswered = false;
 var reconnecting = false;
 var connTimer = null;
 
-var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-function genCode(len) {
-    var s = '';
-    for (var i = 0; i < len; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-    return s;
-}
-function uniqueRoomCode() {
-    return new Promise(function(resolve) {
-        if (!DB) { resolve(null); return; }
-        (function attempt() {
-            var code = genCode(4);
-            DB.ref('rooms/' + code).once('value').then(function(snap) {
-                if (snap.exists()) attempt();
-                else resolve(code);
-            }).catch(function() { resolve(null); });
-        })();
-    });
-}
 function stopCurrentSignaling() {
     if (connTimer) { clearTimeout(connTimer); connTimer = null; }
     if (currentRoomRef) { try { currentRoomRef.off(); } catch (e) {} currentRoomRef = null; }
@@ -523,156 +582,8 @@ function tryConnect() {
     if (currentReqRef) { try { currentReqRef.update({ status: 'connected' }); } catch (e) {} }
 }
 
-async function startHosting() {
-    if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
-    requestNotificationPermission();
-    initKeepAlive();
-    isHost = true;
-    autoConnected = false;
-    dataDCs = [];
-    pendingChunks = {};
-    recvStreams = {};
-    stopCurrentSignaling();
-    showScreen('hosting');
-    $('host-status').textContent = 'Setting up...';
-    $('btn-copy-link').classList.add('hidden');
-    $('host-code').textContent = '····';
-
-    try {
-        pc = new RTCPeerConnection(CONFIG);
-        pc.oniceconnectionstatechange = function() { tryConnect(); };
-
-        ctrlDC = pc.createDataChannel('control');
-        setupCtrlDC(ctrlDC);
-        for (var i = 0; i < NUM_DATA_CHANNELS; i++) {
-            var ch = pc.createDataChannel('data-' + i);
-            setupDataDC(ch, i);
-            dataDCs[i] = ch;
-        }
-
-        var offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await waitForIceGathering(pc);
-
-        if (!DB) {
-            $('host-status').textContent = 'Network connection required to create a code.';
-            return;
-        }
-        var code = await uniqueRoomCode();
-        if (!code) {
-            $('host-status').textContent = 'Network connection required to create a code.';
-            return;
-        }
-        roomCode = code;
-        currentRoomRef = DB.ref('rooms/' + code);
-        await currentRoomRef.set({
-            host: { deviceId: getDeviceId(), name: getDeviceName() },
-            offer: pc.localDescription.sdp,
-            status: 'waiting',
-            createdAt: firebase.database.ServerValue.TIMESTAMP
-        });
-        $('host-code').textContent = code;
-        $('btn-copy-link').classList.remove('hidden');
-        currentRoomRef.on('value', function(snap) {
-            var v = snap.val();
-            if (!v || answered) return;
-            if (v.guest && v.guest.answer) {
-                answered = true;
-                hostGotAnswer(v.guest.answer);
-            }
-        });
-        $('host-status').textContent = 'Waiting for someone to enter this code...';
-    } catch (err) {
-        console.error('Hosting error:', err);
-        $('host-status').textContent = 'Error: ' + err.message;
-    }
-}
-
-async function hostGotAnswer(sdp) {
-    try {
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: sdp }));
-        $('host-status').textContent = 'Connected!';
-        if (currentRoomRef) { try { currentRoomRef.update({ status: 'connected' }); } catch (e) {} }
-        setTimeout(function() { tryConnect(); }, 300);
-    } catch (err) {
-        $('host-status').textContent = 'Connection failed: ' + err.message;
-        setTimeout(function() { showScreen('home'); }, 2500);
-    }
-}
-
-function startJoining() {
-    if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
-    requestNotificationPermission();
-    initKeepAlive();
-    stopCurrentSignaling();
-    showScreen('code');
-    $('code-input').value = '';
-    setTimeout(function() { try { $('code-input').focus(); } catch (e) {} }, 50);
-}
-
-async function joinByCode(code) {
-    code = (code || '').trim().toUpperCase();
-    if (!code) { alert('Please enter the share code.'); return; }
-    if (!DB) { alert('No network available. Please check your connection.'); return; }
-    showScreen('connecting');
-    $('connect-status').textContent = 'Finding room...';
-    try {
-        var snap = await DB.ref('rooms/' + code).once('value');
-        var room = snap.val();
-        if (!room || !room.offer) {
-            $('connect-status').textContent = 'Invalid code. Please check and try again.';
-            setTimeout(function() { showScreen('code'); }, 2200);
-            return;
-        }
-        lastPeerName = (room.host && room.host.name) || null;
-        await joinRoomWithOffer(room, code);
-    } catch (err) {
-        console.error('Join error:', err);
-        $('connect-status').textContent = 'Error: ' + err.message;
-        setTimeout(function() { showScreen('code'); }, 2500);
-    }
-}
-
-async function joinRoomWithOffer(room, code) {
-    isHost = false;
-    autoConnected = false;
-    dataDCs = [];
-    pendingChunks = {};
-    recvStreams = {};
-    stopCurrentSignaling();
-
-    pc = new RTCPeerConnection(CONFIG);
-    pc.oniceconnectionstatechange = function() { tryConnect(); };
-    pc.ondatachannel = function(ev) {
-        var label = ev.channel.label;
-        if (label === 'control') {
-            setupCtrlDC(ev.channel);
-        } else if (label.indexOf('data-') === 0) {
-            var idx = parseInt(label.split('-')[1], 10);
-            setupDataDC(ev.channel, idx);
-        }
-    };
-
-    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: room.offer }));
-    var answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await waitForIceGathering(pc);
-
-    currentRoomRef = DB.ref('rooms/' + code);
-    roomCode = code;
-    await currentRoomRef.update({
-        guest: { deviceId: getDeviceId(), name: getDeviceName(), answer: pc.localDescription.sdp }
-    });
-    $('connect-status').textContent = 'Connecting...';
-
-    connTimer = setTimeout(function() {
-        if (!autoConnected) {
-            $('connect-status').textContent = 'Could not connect. Try again.';
-            setTimeout(function() { showScreen('code'); }, 2200);
-        }
-    }, 25000);
-}
-
+// (The old share-code portal flow was removed: whitelisted devices connect
+// to each other directly from the home screen.)
 // ===================== FILE SELECTION =====================
 
 function selectFiles() { $('file-input').click(); }
@@ -836,7 +747,6 @@ async function handleCtrlMsg(data) {
     switch (msg.type) {
         case 'hello':
             lastPeerName = msg.name || lastPeerName;
-            if (msg.deviceId && msg.deviceId !== getDeviceId()) recordPair(msg.deviceId, msg.name);
             break;
 
         case 'transfer-complete':
@@ -940,11 +850,11 @@ function finalizeRecvStream(msg) {
 }
 
 function dlBlob(blob, name) {
-    // If this device is next to the J.A.R.V.I.S. server, save the file into
+    // If this device can reach the J.A.R.V.I.S. server, save the file into
     // quickshare so he can see it. Otherwise fall back to a normal download.
     var fd = new FormData();
     fd.append('file', blob, name);
-    fetch('http://127.0.0.1:5001/api/quickshare/upload', { method: 'POST', body: fd })
+    fetch(apiBase() + '/api/quickshare/upload', { method: 'POST', body: fd })
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (d && d.ok) {
@@ -1052,16 +962,11 @@ function resetProgressDisplay() {
     if (s) s.style.display = ''; if (r) r.style.display = ''; if (a) a.style.display = '';
 }
 
-// ===================== RECONNECT (REMEMBERED DEVICES) =====================
-
-async function reconnectTo(peerId) {
-    if (!DB) { alert('Network required to reconnect. Please use Send/Receive instead.'); return; }
+async function connectToDevice(deviceId, label) {
+    if (!DB) { alert('Network required to connect. Please check your connection.'); return; }
     if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     if (reconnecting) return;
-    var pairs = getPairs();
-    var peer = pairs[peerId];
-    if (!peer) { renderRecent(); return; }
-    lastPeerName = peer.name;
+    lastPeerName = label || 'device';
     initKeepAlive();
 
     isHost = true;
@@ -1073,7 +978,7 @@ async function reconnectTo(peerId) {
     reconnecting = true;
 
     showScreen('connecting');
-    $('connect-status').textContent = 'Connecting to ' + peer.name + '...';
+    $('connect-status').textContent = 'Connecting to ' + lastPeerName + '...';
 
     try {
         pc = new RTCPeerConnection(CONFIG);
@@ -1092,14 +997,14 @@ async function reconnectTo(peerId) {
         await waitForIceGathering(pc);
 
         var reqId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-        currentReqRef = DB.ref('requests/' + peerId + '/' + reqId);
+        currentReqRef = DB.ref('requests/' + deviceId + '/' + reqId);
         await currentReqRef.set({
-            from: { deviceId: getDeviceId(), name: getDeviceName() },
+            from: { deviceId: getDeviceId(), name: getDeviceName(), username: getSessionUser() },
             offer: pc.localDescription.sdp,
             createdAt: firebase.database.ServerValue.TIMESTAMP
         });
 
-        $('connect-status').textContent = 'Waking ' + peer.name + '...';
+        $('connect-status').textContent = 'Waking ' + lastPeerName + '...';
 
         currentReqRef.on('value', function(snap) {
             var v = snap.val();
@@ -1123,20 +1028,20 @@ async function reconnectTo(peerId) {
 
         connTimer = setTimeout(function() {
             if (!reqAnswered) {
-                $('connect-status').textContent = 'Device not available. Make sure the other app is open, then try again.';
+                $('connect-status').textContent = 'Device not responding. Make sure their app is open, then try again.';
                 reconnecting = false;
                 setTimeout(function() { showScreen('home'); }, 2500);
             }
         }, 20000);
     } catch (err) {
-        console.error('Reconnect error:', err);
+        console.error('Connect error:', err);
         reconnecting = false;
         $('connect-status').textContent = 'Error: ' + err.message;
         setTimeout(function() { showScreen('home'); }, 2500);
     }
 }
 
-function listenForReconnectRequests() {
+function listenForRequests() {
     if (!DB) return;
     var myId = getDeviceId();
     DB.ref('requests/' + myId).on('child_added', function(snap) {
@@ -1146,13 +1051,16 @@ function listenForReconnectRequests() {
             try { snap.ref.remove(); } catch (e) {}
             return;
         }
-        var pairs = getPairs();
-        var fromId = req.from && req.from.deviceId;
-        var peer = fromId ? pairs[fromId] : null;
-        if (!peer) {
+        // Only accept requests from a device that is signed into the whitelist.
+        if (!req.from || !req.from.deviceId || !req.from.username) {
             try { snap.ref.remove(); } catch (e) {}
             return;
         }
+        var peer = {
+            deviceId: req.from.deviceId,
+            name: req.from.username,
+            username: req.from.username
+        };
         handleIncomingRequest(req, snap.key, peer);
     });
 }
@@ -1201,28 +1109,6 @@ async function handleIncomingRequest(req, reqKey, peer) {
     }
 }
 
-function copyShareLink() {
-    if (!roomCode) return;
-    var link = location.href.split('#')[0] + '#c=' + roomCode;
-    var done = function() {
-        $('btn-copy-link').textContent = '✓ Link Copied';
-        setTimeout(function() { $('btn-copy-link').textContent = '🔗 Copy Share Link'; }, 2000);
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(link).then(done).catch(function() { fallbackCopy(link, done); });
-    } else fallbackCopy(link, done);
-}
-function fallbackCopy(text, done) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); done(); } catch (e) {}
-    document.body.removeChild(ta);
-}
-
 // ===================== CONNECTION LIFECYCLE =====================
 
 function disconnect() {
@@ -1256,32 +1142,23 @@ function disconnect() {
     var empty = $('received-empty'), text = $('received-text');
     if (empty) empty.classList.remove('hidden');
     if (text) text.classList.add('hidden');
-    renderRecent();
+    renderDevices();
     showScreen('home');
 }
 
 // ===================== INIT =====================
 
 function init() {
-    $('btn-back-host').addEventListener('click', disconnect);
     $('btn-select-files').addEventListener('click', selectFiles);
     $('file-input').addEventListener('change', onFilesSelected);
     $('btn-send').addEventListener('click', sendFiles);
     $('btn-clear-files').addEventListener('click', clearFiles);
     $('btn-disconnect').addEventListener('click', disconnect);
-    $('btn-connect-code').addEventListener('click', function() { joinByCode($('code-input').value); });
-    $('code-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') joinByCode($('code-input').value); });
-    $('code-input').addEventListener('input', function() { this.value = this.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 4); });
-    $('btn-back-code').addEventListener('click', function() { showScreen('home'); });
-    $('btn-copy-link').addEventListener('click', copyShareLink);
-    $('btn-rename-cancel').addEventListener('click', cancelRename);
-    $('btn-rename-save').addEventListener('click', saveRename);
-    $('rename-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') saveRename(); });
     $('btn-login').addEventListener('click', doLogin);
     $('login-password').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
     $('btn-show-register').addEventListener('click', function() { showScreen('register'); });
-    $('btn-register').addEventListener('click', doRegister);
-    $('reg-password2').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRegister(); });
+    $('btn-register').addEventListener('click', doAddDevice);
+    $('reg-password2').addEventListener('keydown', function(e) { if (e.key === 'Enter') doAddDevice(); });
     $('btn-show-login').addEventListener('click', function() { showScreen('login'); });
     $('btn-logout').addEventListener('click', doLogout);
     var notifBtn = $('btn-notif-blocked');
@@ -1296,23 +1173,24 @@ if (document.readyState === 'loading') {
     try { init(); } catch (e) { console.error('Init error:', e); }
 }
 
-window.startHosting = startHosting;
-window.startJoining = startJoining;
+window.connectToDevice = connectToDevice;
 window.selectFiles = selectFiles;
 window.sendFiles = sendFiles;
 window.disconnect = disconnect;
-window.reconnectTo = reconnectTo;
 
 var _appStarted = false;
 function startApp() {
     showScreen('home');
     var dl = $('device-name-label');
     if (dl) dl.textContent = 'You are ' + getDeviceName();
-    renderRecent();
+    renderDevices();
     updateNotifHint();
+    publishPresence();
+    if (!_presenceTimer) _presenceTimer = setInterval(heartbeatPresence, 25000);
     if (_appStarted) return;
     _appStarted = true;
-    listenForReconnectRequests();
+    listenForRequests();
+    listenForPresence();
     if ('Notification' in window && window.Notification && typeof window.Notification.addEventListener === 'function') {
         window.Notification.addEventListener('permissionchange', updateNotifHint);
     }
@@ -1336,13 +1214,6 @@ function startApp() {
             }
         }
     });
-    try {
-        var hm = location.hash.match(/[#&]c=([A-Za-z0-9]+)/);
-        if (hm) {
-            startJoining();
-            setTimeout(function() { joinByCode(hm[1]); }, 400);
-        }
-    } catch (e) {}
 }
 
 (function boot() {

@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>QuickShare - P2P File Transfer</title>
-<meta name="description" content="Share files directly between devices using a quick code">
+<meta name="description" content="Share files instantly between whitelisted devices">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -34,10 +35,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 .btn-text:hover{color:var(--text)}
 .btn-small{background:transparent;border:none;color:var(--text-muted);cursor:pointer;padding:4px 8px;font-size:1rem}
 .device-label{font-size:.75rem;color:var(--text-muted);margin-top:28px;text-align:center}
-.room-code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:2.8rem;font-weight:800;letter-spacing:.3em;text-indent:.3em;color:var(--primary);background:var(--surface);border:1px dashed var(--border);border-radius:16px;padding:14px 10px;width:100%;max-width:280px;text-align:center}
-.code-input{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:2.2rem;font-weight:700;letter-spacing:.45em;text-indent:.45em;text-align:center;text-transform:uppercase;background:var(--surface);border:1px solid var(--border);border-radius:14px;color:var(--text);padding:16px 12px;width:100%;max-width:280px;outline:none}
-.code-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
-.recent-section{width:100%;max-width:400px;margin-top:28px}
+.recent-section{width:100%;max-width:400px;margin-top:8px}
 .recent-section h3{font-size:.75rem;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.1em}
 .recent-list{display:flex;flex-direction:column;gap:8px}
 .recent-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;width:100%}
@@ -46,19 +44,14 @@ header p{color:var(--text-muted);font-size:.9rem}
 .recent-time{font-size:.72rem;color:var(--text-muted);margin-top:2px}
 .reconnect-btn{background:linear-gradient(135deg,#58a6ff,#1f6feb);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:600;cursor:pointer;flex-shrink:0;-webkit-user-select:none;user-select:none;touch-action:manipulation}
 .reconnect-btn:active{transform:scale(.95)}
-.recent-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
-.rename-btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:8px 11px;border-radius:8px;font-size:.85rem;cursor:pointer;-webkit-user-select:none;user-select:none;touch-action:manipulation}
-.rename-btn:active{transform:scale(.95)}
-.rename-btn:hover{color:var(--text);border-color:var(--primary)}
 .auth-form{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:340px;padding:0 16px}
 .auth-input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:12px;color:var(--text);padding:14px 16px;font-size:1rem;outline:none}
 .auth-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
 .hidden{display:none!important}
-.hero{text-align:center;padding:40px 0}
+.hero{text-align:center;padding:24px 0}
 .hero .icon{font-size:4rem;margin-bottom:16px}
 .hero h2{font-size:1.5rem;margin-bottom:8px}
 .hero p{color:var(--text-muted)}
-.actions{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;padding:20px 0}
 .status{color:var(--text-muted);text-align:center;font-size:.9rem}
 .file-summary{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:.85rem;width:100%;max-width:400px;margin:8px 0 0 0}
 .file-summary .count{flex:1;color:var(--text)}
@@ -96,14 +89,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 .step{display:flex;align-items:flex-start;gap:12px;width:100%;max-width:400px}
 .step p{flex:1;font-size:.9rem;color:var(--text-muted);line-height:1.4}
 @media(min-width:768px){#app{padding-top:32px}.btn{max-width:400px}}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
-.overlay-card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.overlay-card h3{color:var(--text);font-size:1.1rem;font-weight:600}
-#rename-current{font-size:.8rem;word-break:break-word}
-#rename-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px 14px;font-size:.95rem;outline:none}
-#rename-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
-.overlay-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center}
-.overlay-actions .btn-text{width:auto;padding:12px 10px}
 </style>
 </head>
 <body>
@@ -113,25 +98,25 @@ header p{color:var(--text-muted);font-size:.9rem}
 <div id="screen-login" class="screen">
 <div class="auth-form">
 <h2 style="color:var(--primary);margin-bottom:4px">QuickShare</h2>
-<p class="status">Sign in to start sharing files</p>
+<p class="status">Sign in with a whitelisted account to share instantly</p>
 <input id="login-username" class="auth-input" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
 <input id="login-password" class="auth-input" type="password" placeholder="Password" autocomplete="current-password">
 <p class="status" id="login-status"></p>
 <button id="btn-login" class="btn btn-primary">Log In</button>
-<button id="btn-show-register" class="btn btn-text">Create an Account</button>
+<button id="btn-show-register" class="btn btn-text">Add an Account to the Whitelist</button>
 </div>
 </div>
 
-<!-- REGISTER -->
+<!-- ADD ACCOUNT TO WHITELIST -->
 <div id="screen-register" class="screen">
 <div class="auth-form">
-<h2 style="color:var(--primary);margin-bottom:4px">Create Account</h2>
-<p class="status">Pick a username and password</p>
+<h2 style="color:var(--primary);margin-bottom:4px">Add to Whitelist</h2>
+<p class="status">This adds the account to whitelist.json on J.A.R.V.I.S.</p>
 <input id="reg-username" class="auth-input" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
 <input id="reg-password" class="auth-input" type="password" placeholder="Password" autocomplete="new-password">
 <input id="reg-password2" class="auth-input" type="password" placeholder="Confirm password" autocomplete="new-password">
 <p class="status" id="reg-status"></p>
-<button id="btn-register" class="btn btn-primary">Create Account</button>
+<button id="btn-register" class="btn btn-primary">Add to Whitelist</button>
 <button id="btn-show-login" class="btn btn-text">Back to Log In</button>
 </div>
 </div>
@@ -139,38 +124,20 @@ header p{color:var(--text-muted);font-size:.9rem}
 <!-- HOME -->
 <div id="screen-home" class="screen active">
 
-<div class="actions">
-<button id="btn-host" class="btn btn-primary" onclick="startHosting()">📤 Send Files</button>
-<button id="btn-join" class="btn btn-secondary" onclick="startJoining()">📥 Receive Files</button>
+<div class="hero">
+<div class="icon">📡</div>
+<h2>Ready to connect</h2>
+<p class="status">Every device signed into your whitelist shows up here — tap Connect and share files instantly. No codes, no portals.</p>
 </div>
 
-<div id="recent-section" class="recent-section hidden">
-<h3>Recent Devices</h3>
-<div id="recent-list" class="recent-list"></div>
+<div id="device-section" class="recent-section hidden">
+<h3>Online Devices</h3>
+<div id="device-list" class="recent-list"></div>
 </div>
 
 <p class="device-label" id="device-name-label"></p>
 <button id="btn-notif-blocked" class="btn btn-text hidden" style="padding:6px;margin-top:2px;color:#f85149;font-size:.75rem">🔕 Notifications blocked — tap to allow alerts</button>
 <button id="btn-logout" class="btn btn-text" style="padding:10px;margin-top:8px">Log out</button>
-</div>
-
-<!-- HOSTING -->
-<div id="screen-hosting" class="screen">
-<h2>Your Share Code</h2>
-<div class="room-code" id="host-code">····</div>
-<p class="status">Share this code with your friend</p>
-<p class="status" id="host-status">Generating...</p>
-<button id="btn-copy-link" class="btn btn-text hidden">🔗 Copy Share Link</button>
-<button id="btn-back-host" class="btn btn-text">Cancel</button>
-</div>
-
-<!-- ENTER CODE -->
-<div id="screen-code" class="screen">
-<h2>Enter Share Code</h2>
-<p class="status">Type the 4-letter code from the sender</p>
-<input id="code-input" class="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="····">
-<button id="btn-connect-code" class="btn btn-primary">Connect</button>
-<button id="btn-back-code" class="btn btn-text">Back</button>
 </div>
 
 <!-- CONNECTED -->
@@ -231,32 +198,17 @@ header p{color:var(--text-muted);font-size:.9rem}
 </div>
 </div>
 
-<!-- RENAME DEVICE -->
-<div id="rename-overlay" class="overlay hidden">
-<div class="overlay-card">
-<h3>Rename Device</h3>
-<p class="status" id="rename-current"></p>
-<input id="rename-input" type="text" maxlength="40" placeholder="Device name" autocomplete="off">
-<div class="overlay-actions">
-<button id="btn-rename-cancel" class="btn btn-text">Cancel</button>
-<button id="btn-rename-save" class="btn btn-primary" style="width:auto;padding:10px 24px">Save</button>
-</div>
-</div>
-</div>
-
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
 <script src="app.js"></script>
 
 <script>
-console.log('Post-check: app.js loaded', typeof startHosting);
+console.log('Post-check: app.js loaded', typeof connectToDevice);
 (function() {
-    if (typeof startHosting !== 'function') {
-        console.warn('FALLBACK: startHosting not found. app.js may have failed.');
-        var btn1 = document.getElementById('btn-host');
-        var btn2 = document.getElementById('btn-join');
-        btn1.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
-        btn2.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
+    if (typeof connectToDevice !== 'function') {
+        console.warn('FALLBACK: connectToDevice not found. app.js may have failed.');
+        var b = document.getElementById('btn-login');
+        if (b) b.onclick = function() { alert('QuickShare failed to load. Check browser console (F12) for errors.'); };
     }
 })();
 </script>
