@@ -50,9 +50,9 @@ header p{color:var(--text-muted);font-size:.9rem}
 .rename-btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:8px 11px;border-radius:8px;font-size:.85rem;cursor:pointer;-webkit-user-select:none;user-select:none;touch-action:manipulation}
 .rename-btn:active{transform:scale(.95)}
 .rename-btn:hover{color:var(--text);border-color:var(--primary)}
-.sa-input{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px;font-size:.7rem;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;resize:vertical;outline:none}
-.sa-input:focus{border-color:var(--primary)}
-.settings-row{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:400px}
+.auth-form{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:340px;padding:0 16px}
+.auth-input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:12px;color:var(--text);padding:14px 16px;font-size:1rem;outline:none}
+.auth-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
 .hidden{display:none!important}
 .hero{text-align:center;padding:40px 0}
 .hero .icon{font-size:4rem;margin-bottom:16px}
@@ -109,6 +109,32 @@ header p{color:var(--text-muted);font-size:.9rem}
 <body>
 <div id="app">
 
+<!-- LOGIN -->
+<div id="screen-login" class="screen">
+<div class="auth-form">
+<h2 style="color:var(--primary);margin-bottom:4px">QuickShare</h2>
+<p class="status">Sign in to start sharing files</p>
+<input id="login-username" class="auth-input" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
+<input id="login-password" class="auth-input" type="password" placeholder="Password" autocomplete="current-password">
+<p class="status" id="login-status"></p>
+<button id="btn-login" class="btn btn-primary">Log In</button>
+<button id="btn-show-register" class="btn btn-text">Create an Account</button>
+</div>
+</div>
+
+<!-- REGISTER -->
+<div id="screen-register" class="screen">
+<div class="auth-form">
+<h2 style="color:var(--primary);margin-bottom:4px">Create Account</h2>
+<p class="status">Pick a username and password</p>
+<input id="reg-username" class="auth-input" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
+<input id="reg-password" class="auth-input" type="password" placeholder="Password" autocomplete="new-password">
+<input id="reg-password2" class="auth-input" type="password" placeholder="Confirm password" autocomplete="new-password">
+<p class="status" id="reg-status"></p>
+<button id="btn-register" class="btn btn-primary">Create Account</button>
+<button id="btn-show-login" class="btn btn-text">Back to Log In</button>
+</div>
+</div>
 
 <!-- HOME -->
 <div id="screen-home" class="screen active">
@@ -125,21 +151,7 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <p class="device-label" id="device-name-label"></p>
 <button id="btn-notif-blocked" class="btn btn-text hidden" style="padding:6px;margin-top:2px;color:#f85149;font-size:.75rem">🔕 Notifications blocked — tap to allow alerts</button>
-<button id="btn-settings" class="btn btn-text" style="padding:10px;margin-top:8px">⚙️ Push Settings</button>
-</div>
-
-<!-- SETTINGS -->
-<div id="screen-settings" class="screen">
-<h2>Push Settings</h2>
-<p class="status">Paste your Firebase service account JSON here. It is stored in your Firebase Realtime Database (path config/serviceAccount), never in app code or on GitHub. Any device running this app can use it to wake the other phone.</p>
-<div class="settings-row">
-<textarea id="sa-input" class="sa-input" rows="8" placeholder='Paste service account JSON here'></textarea>
-<button id="btn-sa-save" class="btn btn-primary">Save</button>
-<button id="btn-sa-clear" class="btn btn-text">Clear</button>
-<button id="btn-sa-test" class="btn btn-secondary hidden">Send Test Push to This Device</button>
-<p class="status" id="sa-status"></p>
-</div>
-<button id="btn-back-settings" class="btn btn-text">Back</button>
+<button id="btn-logout" class="btn btn-text" style="padding:10px;margin-top:8px">Log out</button>
 </div>
 
 <!-- HOSTING -->
@@ -234,7 +246,6 @@ header p{color:var(--text-muted);font-size:.9rem}
 
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-messaging-compat.js"></script>
 <script src="app.js"></script>
 
 <script>

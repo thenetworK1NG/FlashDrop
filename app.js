@@ -53,11 +53,9 @@ var FB_CONFIG = {
     databaseURL: 'https://share-it-414ed-default-rtdb.firebaseio.com',
     projectId: 'share-it-414ed',
     storageBucket: 'share-it-414ed.firebasestorage.app',
-    messagingSenderId: '280437631286',
     appId: '1:280437631286:web:ed636e0fa0a4c7c5d56b97'
 };
 var DB = null;
-var VAPID_KEY = 'BInpmIM-OZmuN5NxEY_AccW3eEh3EpGYzLjHD2VV-K7Rwwcs3e0DQTpg1vbehzL4jxGtEjuds_O4ydTf4OCaA5A';
 try {
     if (typeof firebase !== 'undefined' && firebase.initializeApp) {
         firebase.initializeApp(FB_CONFIG);
@@ -94,12 +92,116 @@ function getDeviceId() {
 }
 function getDeviceName() {
     if (DEVICE_NAME) return DEVICE_NAME;
+    var sessionUser = getSessionUser();
+    if (sessionUser) { DEVICE_NAME = sessionUser; return DEVICE_NAME; }
     try { DEVICE_NAME = localStorage.getItem('qs.deviceName'); } catch (e) {}
     if (!DEVICE_NAME) {
         DEVICE_NAME = 'Device-' + getDeviceId().slice(0, 4).toUpperCase();
         try { localStorage.setItem('qs.deviceName', DEVICE_NAME); } catch (e) {}
     }
     return DEVICE_NAME;
+}
+
+// ---- accounts (username / password) ----
+function normalizeUsername(u) {
+    return (u || '').trim().toLowerCase();
+}
+function genSalt() {
+    var arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    var s = '';
+    for (var i = 0; i < arr.length; i++) s += arr[i].toString(16).padStart(2, '0');
+    return s;
+}
+function toHex(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
+    return s;
+}
+async function hashPassword(password, salt) {
+    var enc = new TextEncoder();
+    var key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+    var bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' }, key, 256);
+    return toHex(new Uint8Array(bits));
+}
+function getSessionUser() {
+    try { return localStorage.getItem('qs.username'); } catch (e) { return null; }
+}
+function setSessionUser(u) {
+    try { localStorage.setItem('qs.username', u); } catch (e) {}
+}
+function clearSessionUser() {
+    try { localStorage.removeItem('qs.username'); } catch (e) {}
+}
+async function registerUser(username, password) {
+    if (!DB) throw new Error('No network available.');
+    var name = username.trim();
+    if (!name) throw new Error('Username cannot be empty.');
+    if (password.length < 4) throw new Error('Password must be at least 4 characters.');
+    var key = normalizeUsername(name);
+    var snap = await DB.ref('users/' + key).once('value');
+    if (snap.exists()) throw new Error('That username is already taken.');
+    var salt = genSalt();
+    var hash = await hashPassword(password, salt);
+    await DB.ref('users/' + key).set({
+        username: name,
+        salt: salt,
+        hash: hash,
+        createdAt: firebase.database.ServerValue.TIMESTAMP
+    });
+    return name;
+}
+async function loginUser(username, password) {
+    if (!DB) throw new Error('No network available.');
+    var key = normalizeUsername(username);
+    var snap = await DB.ref('users/' + key).once('value');
+    var user = snap.val();
+    if (!user || !user.salt || !user.hash) throw new Error('Invalid username or password.');
+    var hash = await hashPassword(password, user.salt);
+    if (hash !== user.hash) throw new Error('Invalid username or password.');
+    return user.username || key;
+}
+function doLogin() {
+    var u = $('login-username').value.trim();
+    var p = $('login-password').value;
+    var st = $('login-status');
+    if (!u || !p) { st.textContent = 'Enter your username and password.'; return; }
+    st.textContent = 'Signing in...';
+    loginUser(u, p).then(function(name) {
+        DEVICE_NAME = name;
+        setSessionUser(name);
+        startApp();
+    }).catch(function(e) {
+        st.textContent = e.message;
+    });
+}
+function doRegister() {
+    var u = $('reg-username').value.trim();
+    var p = $('reg-password').value;
+    var p2 = $('reg-password2').value;
+    var st = $('reg-status');
+    if (!u || !p) { st.textContent = 'Enter a username and password.'; return; }
+    if (p !== p2) { st.textContent = 'Passwords do not match.'; return; }
+    if (p.length < 4) { st.textContent = 'Password must be at least 4 characters.'; return; }
+    st.textContent = 'Creating account...';
+    registerUser(u, p).then(function(name) {
+        DEVICE_NAME = name;
+        setSessionUser(name);
+        startApp();
+    }).catch(function(e) {
+        st.textContent = e.message;
+    });
+}
+function doLogout() {
+    if (state === 'connected') disconnect();
+    clearSessionUser();
+    DEVICE_NAME = null;
+    $('login-username').value = '';
+    $('login-password').value = '';
+    $('reg-username').value = '';
+    $('reg-password').value = '';
+    $('reg-password2').value = '';
+    showScreen('login');
 }
 
 // ---- remembered devices (pairs) ----
@@ -248,11 +350,9 @@ function requestNotificationPermission() {
     try {
         if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission().then(function(p) {
-                if (p === 'granted') registerFcmToken();
                 updateNotifHint();
             }).catch(function() {});
         } else if ('Notification' in window && Notification.permission === 'granted') {
-            registerFcmToken();
             updateNotifHint();
         }
     } catch (e) {}
@@ -302,174 +402,6 @@ var keepAlive = null;
 function initKeepAlive() { }
 function startKeepAlive() { }
 function stopKeepAlive() { }
-
-// ===================== PUSH NOTIFICATIONS (FCM) =====================
-
-var messaging = null;
-var fcmToken = null;
-
-function initMessaging() {
-    try {
-        if (firebase.messaging && firebase.messaging.isSupported && firebase.messaging.isSupported()) {
-            messaging = firebase.messaging();
-            messaging.onMessage(function(payload) {
-                var d = payload.data || {};
-                notify(d.title || 'QuickShare', d.body || 'New message', 'granted', [200, 100, 200]);
-            });
-            if (messaging.onTokenRefresh) {
-                messaging.onTokenRefresh(function() {
-                    fcmToken = null;
-                    registerFcmToken();
-                });
-            }
-        }
-    } catch (e) { console.warn('Messaging init failed:', e); messaging = null; }
-}
-
-async function registerFcmToken() {
-    if (!messaging || !DB || fcmToken) return;
-    try {
-        var swReg = await navigator.serviceWorker.ready;
-        var token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
-        fcmToken = token;
-        await DB.ref('devices/' + getDeviceId()).set({
-            name: getDeviceName(),
-            fcmToken: token,
-            updatedAt: firebase.database.ServerValue.TIMESTAMP
-        });
-    } catch (e) { console.warn('FCM token error:', e); }
-}
-
-var SA_DB_PATH = 'config/serviceAccount';
-var cachedServiceAccount = null;
-async function getServiceAccount() {
-    if (cachedServiceAccount) return cachedServiceAccount;
-    if (!DB) throw new Error('No network');
-    var snap = await DB.ref(SA_DB_PATH).once('value');
-    var val = snap.val();
-    cachedServiceAccount = val && typeof val === 'object' ? val : null;
-    return cachedServiceAccount;
-}
-async function setServiceAccount(sa) {
-    if (!DB) throw new Error('No network');
-    await DB.ref(SA_DB_PATH).set(sa);
-    cachedServiceAccount = sa;
-}
-async function clearStoredServiceAccount() {
-    if (DB) await DB.ref(SA_DB_PATH).remove();
-    cachedServiceAccount = null;
-}
-
-function b64url(str) {
-    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function pemToBytes(pem) {
-    var b64 = pem.replace(/-----BEGIN PRIVATE KEY-----/, '').replace(/-----END PRIVATE KEY-----/, '').replace(/\s+/g, '');
-    var bin = atob(b64);
-    var bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-}
-async function signJwt(sa, nowSec) {
-    var header = { alg: 'RS256', typ: 'JWT' };
-    var claims = {
-        iss: sa.client_email,
-        scope: 'https://www.googleapis.com/auth/firebase.messaging',
-        aud: 'https://oauth2.googleapis.com/token',
-        iat: nowSec,
-        exp: nowSec + 3600
-    };
-    var data = b64url(JSON.stringify(header)) + '.' + b64url(JSON.stringify(claims));
-    var key = await crypto.subtle.importKey('pkcs8', pemToBytes(sa.private_key),
-        { name: 'RSASSA-PKCS1-v1_5', hash: { name: 'SHA-256' } }, false, ['sign']);
-    var sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(data));
-    var sigBytes = new Uint8Array(sig);
-    var bin = '';
-    for (var i = 0; i < sigBytes.length; i++) bin += String.fromCharCode(sigBytes[i]);
-    return data + '.' + b64url(bin);
-}
-async function getOAuthToken(sa) {
-    var jwt = await signJwt(sa, Math.floor(Date.now() / 1000));
-    var body = 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + encodeURIComponent(jwt);
-    var res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body
-    });
-    var data = await res.json();
-    if (!data.access_token) throw new Error('OAuth failed: ' + (data.error_description || data.error || res.status));
-    return data.access_token;
-}
-async function fcmSend(token, title, body, dataObj) {
-    var sa = await getServiceAccount();
-    if (!sa) throw new Error('No service account configured. Paste it in Push Settings.');
-    var accessToken = await getOAuthToken(sa);
-    var msg = {
-        message: {
-            token: token,
-            data: dataObj || {},
-            android: { priority: 'high' },
-            webpush: { headers: { TTL: '7200' } }
-        }
-    };
-    var res = await fetch('https://fcm.googleapis.com/v1/projects/' + FB_CONFIG.projectId + '/messages:send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
-        body: JSON.stringify(msg)
-    });
-    if (!res.ok) throw new Error('FCM send failed: ' + res.status + ' ' + (await res.text()).slice(0, 300));
-    return true;
-}
-async function sendPushToDevice(peerId, title, body) {
-    if (!DB) throw new Error('No network');
-    var snap = await DB.ref('devices/' + peerId + '/fcmToken').once('value');
-    var tok = snap.val();
-    if (!tok) throw new Error('That device has not registered for push yet. Open QuickShare on it first.');
-    await fcmSend(tok, title, body, { peerId: peerId, type: 'quickshare', title: title, body: body });
-    return true;
-}
-
-// ---- push settings UI ----
-async function openSettings() {
-    showScreen('settings');
-    try {
-        var sa = await getServiceAccount();
-        $('sa-input').value = sa ? JSON.stringify(sa, null, 2) : '';
-        $('sa-status').textContent = sa ? 'Service account saved in your Firebase database.' : 'No service account saved yet.';
-        $('btn-sa-test').classList.toggle('hidden', !sa);
-    } catch (e) {
-        $('sa-input').value = '';
-        $('sa-status').textContent = 'Could not read database: ' + e.message;
-        $('btn-sa-test').classList.add('hidden');
-    }
-}
-async function saveServiceAccount() {
-    try {
-        var parsed = JSON.parse($('sa-input').value);
-        if (!parsed.client_email || !parsed.private_key) { $('sa-status').textContent = 'Missing client_email or private_key.'; return; }
-        await setServiceAccount(parsed);
-        $('sa-status').textContent = 'Saved to your Firebase database. You can now send push notifications.';
-        $('btn-sa-test').classList.remove('hidden');
-    } catch (e) { $('sa-status').textContent = 'Invalid JSON or DB error: ' + e.message; }
-}
-async function clearServiceAccount() {
-    try {
-        await clearStoredServiceAccount();
-        $('sa-input').value = '';
-        $('sa-status').textContent = 'Cleared from your Firebase database.';
-        $('btn-sa-test').classList.add('hidden');
-    } catch (e) { $('sa-status').textContent = 'Could not clear: ' + e.message; }
-}
-async function testPush() {
-    $('sa-status').textContent = 'Sending...';
-    try {
-        await sendPushToDevice(getDeviceId(), 'QuickShare Test', 'Push notifications are working');
-        $('sa-status').textContent = 'Sent! Check your notification.';
-    } catch (e) {
-        console.error(e);
-        $('sa-status').textContent = 'Failed: ' + e.message;
-    }
-}
 
 function showScreen(id) {
     var screens = document.querySelectorAll('.screen');
@@ -1167,19 +1099,7 @@ async function reconnectTo(peerId) {
             createdAt: firebase.database.ServerValue.TIMESTAMP
         });
 
-        var pushSent = false;
-        try {
-            var tokSnap = await DB.ref('devices/' + peerId + '/fcmToken').once('value');
-            if (tokSnap.val()) {
-                await fcmSend(tokSnap.val(),
-                    getDeviceName() + ' wants to send files',
-                    'Tap to open QuickShare and connect',
-                    { peerId: peerId, type: 'quickshare', title: getDeviceName() + ' wants to send files', body: 'Tap to open QuickShare and connect' });
-                pushSent = true;
-            }
-        } catch (e) { console.warn('Push notify failed:', e); }
-
-        $('connect-status').textContent = pushSent ? 'Waking ' + peer.name + '... (push sent)' : 'Waking ' + peer.name + '...';
+        $('connect-status').textContent = 'Waking ' + peer.name + '...';
 
         currentReqRef.on('value', function(snap) {
             var v = snap.val();
@@ -1203,13 +1123,11 @@ async function reconnectTo(peerId) {
 
         connTimer = setTimeout(function() {
             if (!reqAnswered) {
-                $('connect-status').textContent = pushSent
-                    ? 'Waiting for ' + peer.name + ' to open the app...'
-                    : 'Device not available. Make sure the other app is open, then try again.';
+                $('connect-status').textContent = 'Device not available. Make sure the other app is open, then try again.';
                 reconnecting = false;
                 setTimeout(function() { showScreen('home'); }, 2500);
             }
-        }, pushSent ? 600000 : 20000);
+        }, 20000);
     } catch (err) {
         console.error('Reconnect error:', err);
         reconnecting = false;
@@ -1356,14 +1274,16 @@ function init() {
     $('code-input').addEventListener('input', function() { this.value = this.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 4); });
     $('btn-back-code').addEventListener('click', function() { showScreen('home'); });
     $('btn-copy-link').addEventListener('click', copyShareLink);
-    $('btn-settings').addEventListener('click', openSettings);
-    $('btn-back-settings').addEventListener('click', function() { showScreen('home'); });
-    $('btn-sa-save').addEventListener('click', saveServiceAccount);
-    $('btn-sa-clear').addEventListener('click', clearServiceAccount);
-    $('btn-sa-test').addEventListener('click', testPush);
     $('btn-rename-cancel').addEventListener('click', cancelRename);
     $('btn-rename-save').addEventListener('click', saveRename);
     $('rename-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') saveRename(); });
+    $('btn-login').addEventListener('click', doLogin);
+    $('login-password').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+    $('btn-show-register').addEventListener('click', function() { showScreen('register'); });
+    $('btn-register').addEventListener('click', doRegister);
+    $('reg-password2').addEventListener('keydown', function(e) { if (e.key === 'Enter') doRegister(); });
+    $('btn-show-login').addEventListener('click', function() { showScreen('login'); });
+    $('btn-logout').addEventListener('click', doLogout);
     var notifBtn = $('btn-notif-blocked');
     if (notifBtn) notifBtn.addEventListener('click', requestNotificationPermission);
 }
@@ -1383,14 +1303,16 @@ window.sendFiles = sendFiles;
 window.disconnect = disconnect;
 window.reconnectTo = reconnectTo;
 
-(function boot() {
+var _appStarted = false;
+function startApp() {
+    showScreen('home');
     var dl = $('device-name-label');
     if (dl) dl.textContent = 'You are ' + getDeviceName();
     renderRecent();
-    initMessaging();
-    listenForReconnectRequests();
-    registerFcmToken();
     updateNotifHint();
+    if (_appStarted) return;
+    _appStarted = true;
+    listenForReconnectRequests();
     if ('Notification' in window && window.Notification && typeof window.Notification.addEventListener === 'function') {
         window.Notification.addEventListener('permissionchange', updateNotifHint);
     }
@@ -1421,6 +1343,15 @@ window.reconnectTo = reconnectTo;
             setTimeout(function() { joinByCode(hm[1]); }, 400);
         }
     } catch (e) {}
+}
+
+(function boot() {
+    if (getSessionUser()) {
+        startApp();
+    } else {
+        showScreen('login');
+        setTimeout(function() { try { $('login-username').focus(); } catch (e) {} }, 60);
+    }
 })();
 
 try {
