@@ -129,7 +129,35 @@ function setWhitelistUsers(arr) {
     try { localStorage.setItem('jl.whitelistUsers', JSON.stringify(arr)); } catch (e) {}
 }
 
-async function whitelistLogin(username, password) {
+// The whitelist lives on the J.A.R.V.I.S. server AND in the Firebase database,
+// so signing in works no matter where this app is hosted (GitHub Pages, the
+// J.A.R.V.I.S. server, a file server...). The server is tried first; when it
+// is not reachable, the database is used instead.
+function fbUsersRead() {
+    return new Promise(function(resolve, reject) {
+        if (!DB) { reject(new Error('no-db')); return; }
+        DB.ref('whitelist/users').once('value').then(function(snap) {
+            var v = snap.val();
+            var map = {};
+            if (v && typeof v === 'object') {
+                Object.keys(v).forEach(function(k) {
+                    map[String(k).trim().toLowerCase()] = String(v[k]);
+                });
+            }
+            resolve(map);
+        }).catch(function(e) { reject(e); });
+    });
+}
+
+function fbUsersWrite(user, password) {
+    return new Promise(function(resolve, reject) {
+        if (!DB) { reject(new Error('no-db')); return; }
+        DB.ref('whitelist/users').child(user).set(password).then(resolve, reject);
+    });
+}
+
+// 'ok' | 'invalid:<error>' | 'unreachable'
+async function serverLoginAttempt(username, password) {
     var res;
     try {
         res = await fetch(apiBase() + '/api/wetransfer/login', {
@@ -138,24 +166,60 @@ async function whitelistLogin(username, password) {
             body: JSON.stringify({ username: username, password: password })
         });
     } catch (e) {
-        throw new Error('Can\'t reach J.A.R.V.I.S. to check the whitelist. Make sure he is running, then try again.');
+        return 'unreachable';
     }
+    if (res.status === 404 || res.status === 405 || res.status === 501) return 'unreachable';
     var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Login failed.');
+    if (res.ok && data.ok) return 'ok';
+    return 'invalid:' + (data.error || 'Login failed.');
+}
+
+async function whitelistLogin(username, password) {
+    var result = await serverLoginAttempt(username, password);
+    if (result === 'ok') return username;
+    if (result.indexOf('invalid:') === 0) throw new Error(result.slice(8));
+    if (DB) {
+        var map;
+        try {
+            map = await fbUsersRead();
+        } catch (e) {
+            throw new Error('Can\u2019t reach J.A.R.V.I.S. or the database to check the whitelist.');
+        }
+        var key = normalizeUsername(username);
+        if (!(key in map)) throw new Error('That username isn\u2019t on the whitelist yet \u2014 register it first.');
+        if (map[key] !== password) throw new Error('Wrong password.');
+        return username;
     }
-    return data.username || username;
+    throw new Error('No login server here and no database to check the whitelist.');
 }
 
 async function whitelistAdd(username, password) {
-    var res = await fetch(apiBase() + '/api/wetransfer/whitelist/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username, password: password })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Could not add the account.');
-    return data.username || username;
+    var res = null;
+    try {
+        res = await fetch(apiBase() + '/api/wetransfer/whitelist/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username, password: password })
+        });
+    } catch (e) {
+        res = null;
+    }
+    if (res && res.status !== 404 && res.status !== 405 && res.status !== 501) {
+        var data = await res.json().catch(function() { return {}; });
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Could not add the account.');
+        return data.username || username;
+    }
+    if (!DB) throw new Error('No login server here and no database to register with.');
+    var key = normalizeUsername(username);
+    var map;
+    try {
+        map = await fbUsersRead();
+    } catch (e) {
+        throw new Error('Can\u2019t reach the database to register.');
+    }
+    if (key in map) throw new Error('That username is already on the whitelist.');
+    await fbUsersWrite(key, password);
+    return username;
 }
 
 function loadWhitelistUsers() {
@@ -166,7 +230,15 @@ function loadWhitelistUsers() {
                 setWhitelistUsers(data.users);
                 return data.users;
             }
-            return getWhitelistUsers();
+            return null;
+        })
+        .then(function(users) {
+            if (users) return users;
+            return fbUsersRead().then(function(map) {
+                var list = Object.keys(map);
+                setWhitelistUsers(list);
+                return list;
+            });
         })
         .catch(function() { return getWhitelistUsers(); });
 }
