@@ -1,7 +1,7 @@
 {
-    "name": "QuickShare - P2P File Transfer",
-    "short_name": "QuickShare",
-    "description": "Share files directly between devices via WebRTC. No servers, no uploads.",
+    "name": "JARVIS Link",
+    "short_name": "JARVIS Link",
+    "description": "Send files from your phone straight into J.A.R.V.I.S.'s quickshare. Autolinks with J.A.R.V.I.S. the moment he's online.",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0d1117",

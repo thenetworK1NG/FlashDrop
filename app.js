@@ -42,10 +42,11 @@ var _txStart = 0;
 var _rxBatchStart = 0;
 var _lastPct = -1;
 var _throttleTimer = 0;
+var _linkCallbacks = [];
+var _jarvisAutoDone = false;
+var _jarvisTargetId = null;
 
 function $(id) { return document.getElementById(id); }
-
-// ===================== FIREBASE SIGNALING =====================
 
 var FB_CONFIG = {
     apiKey: 'AIzaSyAwwm1NYa-jaKNqmJCGzKD6Blyq5VUVWuc',
@@ -63,7 +64,6 @@ try {
     }
 } catch (e) { console.warn('Firebase init failed:', e); DB = null; }
 
-// ---- device identity ----
 var DEVICE_ID = null;
 var DEVICE_NAME = null;
 
@@ -83,10 +83,10 @@ function genUuid() {
 }
 function getDeviceId() {
     if (DEVICE_ID) return DEVICE_ID;
-    try { DEVICE_ID = localStorage.getItem('qs.deviceId'); } catch (e) {}
+    try { DEVICE_ID = localStorage.getItem('jl.deviceId'); } catch (e) {}
     if (!DEVICE_ID) {
         DEVICE_ID = genUuid();
-        try { localStorage.setItem('qs.deviceId', DEVICE_ID); } catch (e) {}
+        try { localStorage.setItem('jl.deviceId', DEVICE_ID); } catch (e) {}
     }
     return DEVICE_ID;
 }
@@ -94,19 +94,13 @@ function getDeviceName() {
     if (DEVICE_NAME) return DEVICE_NAME;
     var sessionUser = getSessionUser();
     if (sessionUser) { DEVICE_NAME = sessionUser; return DEVICE_NAME; }
-    try { DEVICE_NAME = localStorage.getItem('qs.deviceName'); } catch (e) {}
+    try { DEVICE_NAME = localStorage.getItem('jl.deviceName'); } catch (e) {}
     if (!DEVICE_NAME) {
-        DEVICE_NAME = 'Device-' + getDeviceId().slice(0, 4).toUpperCase();
-        try { localStorage.setItem('qs.deviceName', DEVICE_NAME); } catch (e) {}
+        DEVICE_NAME = 'Phone-' + getDeviceId().slice(0, 4).toUpperCase();
+        try { localStorage.setItem('jl.deviceName', DEVICE_NAME); } catch (e) {}
     }
     return DEVICE_NAME;
 }
-
-// ---- whitelist accounts (whitelist.json on the J.A.R.V.I.S. server) ----
-// The app never stores accounts itself: the whitelist lives in a JSON file on
-// the J.A.R.V.I.S. server and login is checked there. Any device that signs in
-// with a whitelisted account can connect to every other whitelisted device
-// instantly - no share codes, no portals.
 
 function apiBase() {
     return location.origin;
@@ -117,22 +111,22 @@ function normalizeUsername(u) {
 }
 
 function getSessionUser() {
-    try { return localStorage.getItem('qs.username'); } catch (e) { return null; }
+    try { return localStorage.getItem('jl.username'); } catch (e) { return null; }
 }
 function setSessionUser(u) {
-    try { localStorage.setItem('qs.username', u); } catch (e) {}
+    try { localStorage.setItem('jl.username', u); } catch (e) {}
 }
 function clearSessionUser() {
-    try { localStorage.removeItem('qs.username'); } catch (e) {}
+    try { localStorage.removeItem('jl.username'); } catch (e) {}
 }
 function getWhitelistUsers() {
     try {
-        var arr = JSON.parse(localStorage.getItem('qs.whitelistUsers') || '[]');
+        var arr = JSON.parse(localStorage.getItem('jl.whitelistUsers') || '[]');
         return Array.isArray(arr) ? arr : [];
     } catch (e) { return []; }
 }
 function setWhitelistUsers(arr) {
-    try { localStorage.setItem('qs.whitelistUsers', JSON.stringify(arr)); } catch (e) {}
+    try { localStorage.setItem('jl.whitelistUsers', JSON.stringify(arr)); } catch (e) {}
 }
 
 async function whitelistLogin(username, password) {
@@ -144,13 +138,10 @@ async function whitelistLogin(username, password) {
             body: JSON.stringify({ username: username, password: password })
         });
     } catch (e) {
-        throw new Error('Can\'t reach the J.A.R.V.I.S. login server. Open this page from the J.A.R.V.I.S. server, not a plain file server.');
+        throw new Error('Can\'t reach J.A.R.V.I.S. to check the whitelist. Make sure he is running, then try again.');
     }
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
-        if (res.status === 501 || res.status === 405 || res.status === 404) {
-            throw new Error('No login server here \u2014 open QuickShare from J.A.R.V.I.S. (http://<your-pc>:8001/wetransfer/ or port 5001).');
-        }
         throw new Error(data.error || 'Login failed.');
     }
     return data.username || username;
@@ -217,24 +208,20 @@ function doAddDevice() {
 
 function doLogout() {
     if (state === 'connected') disconnect();
+    _jarvisAutoDone = false;
+    _jarvisTargetId = null;
+    _linkCallbacks = [];
     stopPresence();
     clearSessionUser();
     DEVICE_NAME = null;
-    $('login-username').value = '';
-    $('login-password').value = '';
-    $('reg-username').value = '';
-    $('reg-password').value = '';
-    $('reg-password2').value = '';
+    var l1 = $('login-username'), l2 = $('login-password'), r1 = $('reg-username'), r2 = $('reg-password'), r3 = $('reg-password2');
+    if (l1) l1.value = '';
+    if (l2) l2.value = '';
+    if (r1) r1.value = '';
+    if (r2) r2.value = '';
+    if (r3) r3.value = '';
     showScreen('login');
 }
-
-// ---- presence / auto-discovery (whitelisted devices online right now) ----
-// Every logged-in device announces itself under presence/<username>/<deviceId>.
-// Devices listen to that node and see one another instantly, so there is no
-// need to set up a portal or share a code before sharing files.
-
-var onlineDevices = {};
-var _presenceTimer = 0;
 
 function deviceShort() {
     return getDeviceId().slice(0, 4).toUpperCase();
@@ -243,6 +230,9 @@ function presenceName() {
     var u = getSessionUser();
     return u ? (u + ' \u00b7 ' + deviceShort()) : deviceShort();
 }
+
+var onlineDevices = {};
+var _presenceTimer = 0;
 
 function publishPresence() {
     if (!DB) return;
@@ -289,9 +279,49 @@ function formatTimeAgo(ts) {
     return Math.floor(diff / 86400000) + 'd ago';
 }
 
+function findJarvisDevice() {
+    var keys = Object.keys(onlineDevices);
+    for (var i = 0; i < keys.length; i++) {
+        var d = onlineDevices[keys[i]];
+        if (!d || d.isSelf || !d.online) continue;
+        if (d.isJarvis) return d;
+    }
+    return null;
+}
+
+function updateJarvisCard() {
+    var dot = $('jarvis-status-dot'), txt = $('jarvis-status-text'), btn = $('btn-jarvis-send');
+    if (!dot || !txt || !btn) return;
+    var j = findJarvisDevice();
+    if (autoConnected && _jarvisTargetId) {
+        dot.className = 'dot dot-green';
+        txt.textContent = 'linked \u00b7 ready to send & receive';
+        btn.textContent = '\ud83d\udce4 Send to J.A.R.V.I.S.';
+        btn.disabled = false;
+        return;
+    }
+    if (reconnecting) {
+        dot.className = 'dot dot-gold';
+        txt.textContent = 'linking\u2026';
+        btn.textContent = 'Linking to J.A.R.V.I.S.\u2026';
+        btn.disabled = true;
+        return;
+    }
+    if (j) {
+        dot.className = 'dot dot-green';
+        txt.textContent = 'online \u00b7 tap to link';
+        btn.textContent = '\ud83d\udce4 Send to J.A.R.V.I.S.';
+        btn.disabled = false;
+    } else {
+        dot.className = 'dot dot-red';
+        txt.textContent = 'offline \u00b7 start J.A.R.V.I.S. on your PC';
+        btn.textContent = 'J.A.R.V.I.S. is offline';
+        btn.disabled = true;
+    }
+}
+
 function renderDevices() {
     var sec = $('device-section'), wrap = $('device-list');
-    if (!sec || !wrap) return;
     var whitelist = getWhitelistUsers();
     var items = [];
     Object.keys(onlineDevices).forEach(function(id) {
@@ -302,9 +332,13 @@ function renderDevices() {
         items.push(d);
     });
     items.sort(function(a, b) { return (b.lastSeen || 0) - (a.lastSeen || 0); });
-    if (items.length === 0) { sec.classList.add('hidden'); return; }
-    sec.classList.remove('hidden');
-    wrap.innerHTML = '';
+    if (!items.length) {
+        if (sec) sec.classList.add('hidden');
+        updateJarvisCard();
+        return;
+    }
+    if (sec) sec.classList.remove('hidden');
+    if (wrap) wrap.innerHTML = '';
     var others = 0;
     items.forEach(function(d) {
         var row = document.createElement('div');
@@ -315,6 +349,12 @@ function renderDevices() {
         var nm = document.createElement('div');
         nm.className = 'recent-name';
         nm.textContent = (d.label || d.username || 'Device') + (d.isSelf ? '  \u00b7  you' : '');
+        if (d.isJarvis && !d.isSelf) {
+            var badge = document.createElement('span');
+            badge.className = 'jarvis-badge';
+            badge.textContent = 'J.A.R.V.I.S.';
+            nm.appendChild(badge);
+        }
         var tm = document.createElement('div');
         tm.className = 'recent-time';
         tm.textContent = (d.username || '') + ' \u00b7 ' + formatTimeAgo(d.lastSeen);
@@ -327,7 +367,8 @@ function renderDevices() {
             btn.className = 'reconnect-btn';
             btn.textContent = 'Connect';
             btn.addEventListener('click', function() {
-                connectToDevice(d.deviceId, d.label || d.username || 'device');
+                _jarvisTargetId = d.isJarvis ? d.deviceId : null;
+                connectToDevice(d.deviceId, d.isJarvis ? 'J.A.R.V.I.S.' : (d.label || d.username || 'device'));
             });
             row.appendChild(btn);
         } else {
@@ -337,15 +378,26 @@ function renderDevices() {
             tag.style.alignSelf = 'center';
             row.appendChild(tag);
         }
-        wrap.appendChild(row);
+        if (wrap) wrap.appendChild(row);
     });
-    if (others === 0) {
+    if (others === 0 && wrap) {
         var hint = document.createElement('div');
         hint.className = 'recent-time';
         hint.style.padding = '8px 2px';
-        hint.textContent = 'No other whitelisted devices online yet. Sign in on another device and it shows up here automatically.';
+        hint.textContent = 'Only your phone is online. Other whitelisted devices appear here when signed in.';
         wrap.appendChild(hint);
     }
+    updateJarvisCard();
+}
+
+function maybeAutoLink() {
+    if (state !== 'home') return;
+    if (autoConnected || reconnecting || _jarvisAutoDone) return;
+    var j = findJarvisDevice();
+    if (!j) return;
+    _jarvisAutoDone = true;
+    _jarvisTargetId = j.deviceId;
+    connectToDevice(j.deviceId, 'J.A.R.V.I.S.');
 }
 
 function listenForPresence() {
@@ -365,17 +417,18 @@ function listenForPresence() {
                         username: e.username || uKey,
                         label: e.name || e.username || devId,
                         lastSeen: (typeof e.lastSeen === 'number' ? e.lastSeen : Date.now()),
-                        online: !!e.online
+                        online: !!e.online,
+                        isJarvis: !!e.isJarvis
                     };
                 });
             });
         }
         onlineDevices = next;
         renderDevices();
+        maybeAutoLink();
     });
 }
 
-// ---- signaling state ----
 var roomCode = null;
 var currentRoomRef = null;
 var currentReqRef = null;
@@ -400,8 +453,6 @@ function cleanupSignalingData() {
     if (currentReqRef) { try { currentReqRef.remove(); } catch (e) {} }
     stopCurrentSignaling();
 }
-
-// ===================== NOTIFICATIONS / VIBRATION / WAKE LOCK =====================
 
 var wakeLock = null;
 
@@ -433,7 +484,7 @@ function notify(title, body, soundName, vibratePattern) {
     } catch (e) {}
     try {
         if ('Notification' in window && Notification.permission === 'granted') {
-            var n = new Notification(title, { body: body, icon: 'icon-192.png', tag: 'quickshare' });
+            var n = new Notification(title, { body: body, icon: 'icon-192.png', tag: 'jarvis-link' });
             setTimeout(function() { try { n.close(); } catch (e) {} }, 6000);
         }
     } catch (e) {}
@@ -454,10 +505,6 @@ function releaseWakeLock() {
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
 }
 
-// Background keep-alive audio was removed: the white-noise loop it played
-// (to keep the tab alive during background transfers) was audible and
-// annoying. Wake lock still keeps transfers going while the app is visible.
-var keepAlive = null;
 function initKeepAlive() { }
 function startKeepAlive() { }
 function stopKeepAlive() { }
@@ -532,8 +579,6 @@ function updateThroughput(fileSizeBytes, elapsedMs) {
     else currentChunkSize = CHUNK_SIZE_BASE;
 }
 
-// ===================== WEBRTC =====================
-
 function setupCtrlDC(channel) {
     ctrlDC = channel;
     channel.binaryType = 'arraybuffer';
@@ -576,15 +621,16 @@ function tryConnect() {
     requestWakeLock();
     startKeepAlive();
     showScreen('connected');
-    notify('QuickShare', 'Connected to ' + (lastPeerName || 'your device'), 'granted', [80]);
+    var peer = $('peer-label');
+    if (peer) peer.textContent = lastPeerName || 'J.A.R.V.I.S.';
+    notify('JARVIS Link', 'Linked to ' + (lastPeerName || 'your device'), 'granted', [80]);
     try { ctrlDC.send(JSON.stringify({ type: 'hello', deviceId: getDeviceId(), name: getDeviceName() })); } catch (e) {}
     if (currentRoomRef) { try { currentRoomRef.update({ status: 'connected' }); } catch (e) {} }
     if (currentReqRef) { try { currentReqRef.update({ status: 'connected' }); } catch (e) {} }
+    var cbs = _linkCallbacks; _linkCallbacks = [];
+    for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} }
+    updateJarvisCard();
 }
-
-// (The old share-code portal flow was removed: whitelisted devices connect
-// to each other directly from the home screen.)
-// ===================== FILE SELECTION =====================
 
 function selectFiles() { $('file-input').click(); }
 
@@ -615,10 +661,8 @@ function clearFiles() {
     renderSummary();
 }
 
-// ===================== SEND ENGINE =====================
-
 async function sendFiles() {
-    if (!ctrlDC || ctrlDC.readyState !== 'open') return alert('Not connected to any device.');
+    if (!ctrlDC || ctrlDC.readyState !== 'open') return alert('Not linked to any device.');
     var openDCs = dataDCs.filter(function(c) { return c && c.readyState === 'open'; });
     if (openDCs.length === 0) return alert('No data channels available.');
 
@@ -676,7 +720,7 @@ async function sendFiles() {
     ctrlDC.send(JSON.stringify({ type: 'transfer-complete', elapsed: elapsed, speed: speed }));
     stopBgProgress();
     playSound('sent');
-    notify('Transfer Complete', files.length + ' file' + (files.length !== 1 ? 's' : '') + ' sent to ' + (lastPeerName || 'device'), 'sent', [200, 100, 200]);
+    notify('Transfer Complete', files.length + ' file' + (files.length !== 1 ? 's' : '') + ' sent to ' + (lastPeerName || 'J.A.R.V.I.S.'), 'sent', [200, 100, 200]);
     showSuccess(elapsed, speed);
 }
 
@@ -737,8 +781,6 @@ async function waitBufferDrain(dataDC) {
     });
 }
 
-// ===================== RECEIVE ENGINE =====================
-
 async function handleCtrlMsg(data) {
     try {
         var msg = JSON.parse(data);
@@ -758,7 +800,7 @@ async function handleCtrlMsg(data) {
             }
             _rxBatchStart = 0;
             playSound('sent');
-            notify('Files Received', _receivedCount + ' item' + (_receivedCount !== 1 ? 's' : '') + ' from ' + (lastPeerName || 'device'), 'sent', [200, 100, 200]);
+            notify('Files Received', _receivedCount + ' item' + (_receivedCount !== 1 ? 's' : '') + ' from ' + (lastPeerName || 'J.A.R.V.I.S.'), 'sent', [200, 100, 200]);
             break;
 
         case 'file-start':
@@ -816,7 +858,7 @@ async function setupRecvStream(msg) {
 
     recvStreams[ci] = stream;
 
-    notify('Receiving File', msg.name + ' from ' + (lastPeerName || 'device'), null, [150]);
+    notify('Receiving File', msg.name + ' from ' + (lastPeerName || 'J.A.R.V.I.S.'), null, [150]);
     $('progress-section').classList.remove('hidden');
     resetProgressDisplay();
     setProgressRole(false);
@@ -840,30 +882,13 @@ function finalizeRecvStream(msg) {
     if (!stream) return;
 
     var blob = new Blob(stream.chunks, { type: stream.mimeType });
-    dlBlob(blob, stream.name);
+    doDownload(blob, stream.name);
 
     addReceived(stream.name, stream.size);
     delete recvStreams[ci];
 
     $('progress-label').textContent = 'Received ' + stream.name;
     updateProgress(_rxTotalBytes > 0 ? _rxReceivedBytes / _rxTotalBytes : 1);
-}
-
-function dlBlob(blob, name) {
-    // If this device can reach the J.A.R.V.I.S. server, save the file into
-    // quickshare so he can see it. Otherwise fall back to a normal download.
-    var fd = new FormData();
-    fd.append('file', blob, name);
-    fetch(apiBase() + '/api/quickshare/upload', { method: 'POST', body: fd })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d && d.ok) {
-                notify('Saved to quickshare', (d.name || name) + ' is now with J.A.R.V.I.S.', 'sent', [80]);
-                return;
-            }
-            doDownload(blob, name);
-        })
-        .catch(function() { doDownload(blob, name); });
 }
 
 function doDownload(blob, name) {
@@ -885,11 +910,9 @@ function addReceived(name, size) {
     if (empty) empty.classList.add('hidden');
     if (text) {
         text.classList.remove('hidden');
-        text.innerHTML = '<span class="hit">' + _receivedCount + '</span> ' + (_receivedCount === 1 ? 'item' : 'items') + ' received · ' + formatSize(_receivedBytes);
+        text.innerHTML = '<span class="hit">' + _receivedCount + '</span> ' + (_receivedCount === 1 ? 'item' : 'items') + ' received \u00b7 ' + formatSize(_receivedBytes);
     }
 }
-
-// ===================== PROGRESS UI =====================
 
 function updateProgress(fraction) {
     var pct = Math.min(100, Math.round(fraction * 100));
@@ -907,8 +930,6 @@ function updateProgress(fraction) {
     if (pr) pr.textContent = pct + '%';
 }
 
-// While the page is hidden/locked, the UI cannot paint, so report progress
-// via a system notification every 10 seconds instead.
 function startBgProgress() {
     if (_bgProgressTimer) return;
     _bgProgressTimer = setInterval(function() {
@@ -918,7 +939,7 @@ function startBgProgress() {
             var got = _txTotalBytes > 0 ? _txSentBytes : _rxReceivedBytes;
             if (!total || got <= 0 || got >= total) return;
             var pct = Math.min(99, Math.round((got / total) * 100));
-            notify('QuickShare', (_txTotalBytes > 0 ? 'Sending' : 'Receiving') + ' ' + pct + '%', null, null);
+            notify('JARVIS Link', (_txTotalBytes > 0 ? 'Sending' : 'Receiving') + ' ' + pct + '%', null, null);
         } catch (e) {}
     }, 10000);
 }
@@ -962,8 +983,31 @@ function resetProgressDisplay() {
     if (s) s.style.display = ''; if (r) r.style.display = ''; if (a) a.style.display = '';
 }
 
+function ensureLinked(deviceId, label) {
+    return new Promise(function(resolve) {
+        if (autoConnected) { resolve(); return; }
+        var done = false;
+        function fin() { if (!done) { done = true; resolve(); } }
+        _linkCallbacks.push(fin);
+        if (!reconnecting) connectToDevice(deviceId, label);
+        setTimeout(fin, 26000);
+    });
+}
+
+function sendToJarvis() {
+    var j = findJarvisDevice();
+    if (!j) {
+        alert('J.A.R.V.I.S. is offline. Start J.A.R.V.I.S. on your PC first.');
+        return;
+    }
+    _jarvisTargetId = j.deviceId;
+    ensureLinked(j.deviceId, 'J.A.R.V.I.S.').then(function() {
+        setTimeout(function() { selectFiles(); }, 300);
+    });
+}
+
 async function connectToDevice(deviceId, label) {
-    if (!DB) { alert('Network required to connect. Please check your connection.'); return; }
+    if (!DB) { alert('Network required to link. Please check your connection.'); return; }
     if (!window.RTCPeerConnection) { alert('WebRTC not supported in this browser.'); return; }
     if (reconnecting) return;
     lastPeerName = label || 'device';
@@ -978,7 +1022,7 @@ async function connectToDevice(deviceId, label) {
     reconnecting = true;
 
     showScreen('connecting');
-    $('connect-status').textContent = 'Connecting to ' + lastPeerName + '...';
+    $('connect-status').textContent = 'Linking to ' + lastPeerName + '...';
 
     try {
         pc = new RTCPeerConnection(CONFIG);
@@ -1014,12 +1058,12 @@ async function connectToDevice(deviceId, label) {
                 if (connTimer) { clearTimeout(connTimer); connTimer = null; }
                 pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: v.answer }))
                     .then(function() {
-                        $('connect-status').textContent = 'Connected!';
+                        $('connect-status').textContent = 'Linked!';
                         if (currentReqRef) { try { currentReqRef.update({ status: 'connected' }); } catch (e) {} }
                         setTimeout(function() { tryConnect(); }, 300);
                     })
                     .catch(function(err) {
-                        $('connect-status').textContent = 'Connection failed: ' + err.message;
+                        $('connect-status').textContent = 'Link failed: ' + err.message;
                         reconnecting = false;
                         setTimeout(function() { showScreen('home'); }, 2500);
                     });
@@ -1028,13 +1072,13 @@ async function connectToDevice(deviceId, label) {
 
         connTimer = setTimeout(function() {
             if (!reqAnswered) {
-                $('connect-status').textContent = 'Device not responding. Make sure their app is open, then try again.';
+                $('connect-status').textContent = 'J.A.R.V.I.S. did not answer. Make sure his app is open, then tap Send to J.A.R.V.I.S. again.';
                 reconnecting = false;
-                setTimeout(function() { showScreen('home'); }, 2500);
+                setTimeout(function() { showScreen('home'); }, 3000);
             }
         }, 20000);
     } catch (err) {
-        console.error('Connect error:', err);
+        console.error('Link error:', err);
         reconnecting = false;
         $('connect-status').textContent = 'Error: ' + err.message;
         setTimeout(function() { showScreen('home'); }, 2500);
@@ -1051,7 +1095,6 @@ function listenForRequests() {
             try { snap.ref.remove(); } catch (e) {}
             return;
         }
-        // Only accept requests from a device that is signed into the whitelist.
         if (!req.from || !req.from.deviceId || !req.from.username) {
             try { snap.ref.remove(); } catch (e) {}
             return;
@@ -1079,7 +1122,7 @@ async function handleIncomingRequest(req, reqKey, peer) {
     recvStreams = {};
 
     showScreen('connecting');
-    $('connect-status').textContent = 'Reconnecting with ' + peer.name + '...';
+    $('connect-status').textContent = 'Linking with ' + peer.name + '...';
     playSound('scan');
 
     try {
@@ -1102,14 +1145,12 @@ async function handleIncomingRequest(req, reqKey, peer) {
 
         recvReqRef = DB.ref('requests/' + getDeviceId() + '/' + reqKey);
         await recvReqRef.update({ answer: pc.localDescription.sdp });
-        $('connect-status').textContent = 'Connecting...';
+        $('connect-status').textContent = 'Linking...';
     } catch (err) {
         console.error('Incoming request error:', err);
         showScreen('home');
     }
 }
-
-// ===================== CONNECTION LIFECYCLE =====================
 
 function disconnect() {
     if (ctrlDC) { try { ctrlDC.close(); } catch(_){} ctrlDC = null; }
@@ -1130,15 +1171,18 @@ function disconnect() {
     _rxReceivedBytes = 0;
     var fs = $('file-summary');
     if (fs) fs.classList.add('hidden');
-    $('btn-send').classList.add('hidden');
+    var bs = $('btn-send');
+    if (bs) bs.classList.add('hidden');
     _receivedCount = 0;
     _receivedBytes = 0;
     _rxBatchStart = 0;
     resetProgressDisplay();
     releaseWakeLock();
     stopKeepAlive();
-    $('progress-section').classList.add('hidden');
-    $('file-input').value = '';
+    var ps = $('progress-section');
+    if (ps) ps.classList.add('hidden');
+    var fi = $('file-input');
+    if (fi) fi.value = '';
     var empty = $('received-empty'), text = $('received-text');
     if (empty) empty.classList.remove('hidden');
     if (text) text.classList.add('hidden');
@@ -1146,9 +1190,8 @@ function disconnect() {
     showScreen('home');
 }
 
-// ===================== INIT =====================
-
 function init() {
+    $('btn-jarvis-send').addEventListener('click', sendToJarvis);
     $('btn-select-files').addEventListener('click', selectFiles);
     $('file-input').addEventListener('change', onFilesSelected);
     $('btn-send').addEventListener('click', sendFiles);
@@ -1176,13 +1219,14 @@ if (document.readyState === 'loading') {
 window.connectToDevice = connectToDevice;
 window.selectFiles = selectFiles;
 window.sendFiles = sendFiles;
+window.sendToJarvis = sendToJarvis;
 window.disconnect = disconnect;
 
 var _appStarted = false;
 function startApp() {
     showScreen('home');
     var dl = $('device-name-label');
-    if (dl) dl.textContent = 'You are ' + getDeviceName();
+    if (dl) dl.textContent = 'Signed in as ' + getDeviceName();
     renderDevices();
     updateNotifHint();
     publishPresence();
