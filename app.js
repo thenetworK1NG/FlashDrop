@@ -145,15 +145,55 @@ function renderRecent() {
             tm.textContent = 'Connected ' + formatTimeAgo(p.lastConnected);
             info.appendChild(nm);
             info.appendChild(tm);
+            var btnGrp = document.createElement('div');
+            btnGrp.className = 'recent-actions';
+            var renameBtn = document.createElement('button');
+            renameBtn.className = 'reconnect-btn rename-btn';
+            renameBtn.textContent = '✎';
+            renameBtn.title = 'Rename device';
+            renameBtn.setAttribute('aria-label', 'Rename ' + p.name);
+            renameBtn.addEventListener('click', function() { renamePair(p.peerId); });
             var btn = document.createElement('button');
             btn.className = 'reconnect-btn';
             btn.textContent = 'Connect';
             btn.addEventListener('click', function() { reconnectTo(p.peerId); });
+            btnGrp.appendChild(renameBtn);
+            btnGrp.appendChild(btn);
             row.appendChild(info);
-            row.appendChild(btn);
+            row.appendChild(btnGrp);
             wrap.appendChild(row);
         })(pairs[keys[i]]);
     }
+}
+
+// ---- rename remembered device ----
+var renamingPeerId = null;
+function renamePair(peerId) {
+    var pairs = getPairs();
+    var peer = pairs[peerId];
+    if (!peer) return;
+    renamingPeerId = peerId;
+    $('rename-current').textContent = 'Current name: ' + peer.name;
+    $('rename-input').value = peer.name;
+    $('rename-overlay').classList.remove('hidden');
+    setTimeout(function() { try { $('rename-input').focus(); $('rename-input').select(); } catch (e) {} }, 60);
+}
+function saveRename() {
+    if (!renamingPeerId) return;
+    var name = $('rename-input').value.trim();
+    if (name) {
+        var pairs = getPairs();
+        if (pairs[renamingPeerId]) {
+            pairs[renamingPeerId].name = name;
+            savePairs(pairs);
+        }
+    }
+    cancelRename();
+    renderRecent();
+}
+function cancelRename() {
+    renamingPeerId = null;
+    $('rename-overlay').classList.add('hidden');
 }
 
 // ---- signaling state ----
@@ -255,64 +295,13 @@ function releaseWakeLock() {
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
 }
 
-// Silent audio loop so the browser keeps the tab alive in the background.
-// IMPORTANT: gain must be NONZERO - Chrome treats zero-amplitude audio as
-// "silent" and does not grant the background-playback exemption (tabs playing
-// audio are exempt from aggressive background throttling/freezing).
+// Background keep-alive audio was removed: the white-noise loop it played
+// (to keep the tab alive during background transfers) was audible and
+// annoying. Wake lock still keeps transfers going while the app is visible.
 var keepAlive = null;
-function buildKeepAliveSource(ctx) {
-    var len = ctx.sampleRate * 6;
-    var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
-    var data = buffer.getChannelData(0);
-    for (var i = 0; i < len; i++) data[i] = (Math.random() - 0.5) * 0.2;
-    var src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = true;
-    return src;
-}
-function initKeepAlive() {
-    try {
-        if (keepAlive) return;
-        var AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        var ctx = new AC();
-        var src = buildKeepAliveSource(ctx);
-        var gain = ctx.createGain();
-        gain.gain.value = 0.04;
-        src.connect(gain);
-        gain.connect(ctx.destination);
-        keepAlive = { ctx: ctx, src: src, gain: gain, rate: ctx.sampleRate };
-        src.start();
-        if (ctx.state === 'suspended') ctx.resume().catch(function() {});
-        ctx.onstatechange = function() {
-            if (!keepAlive || keepAlive.ctx !== ctx) return;
-            if (ctx.state === 'suspended') ctx.resume().catch(function() {});
-            if (ctx.sampleRate !== keepAlive.rate) {
-                try { keepAlive.src.stop(); } catch (e) {}
-                var s2 = buildKeepAliveSource(ctx);
-                keepAlive.rate = ctx.sampleRate;
-                s2.connect(keepAlive.gain);
-                keepAlive.src = s2;
-                s2.start();
-            }
-        };
-    } catch (e) { keepAlive = null; }
-}
-function startKeepAlive() {
-    try {
-        if (!keepAlive) initKeepAlive();
-        if (keepAlive && keepAlive.ctx.state === 'suspended') keepAlive.ctx.resume().catch(function() {});
-    } catch (e) {}
-}
-function stopKeepAlive() {
-    try {
-        if (keepAlive) {
-            try { keepAlive.src.stop(); } catch (e) {}
-            try { keepAlive.ctx.close(); } catch (e) {}
-            keepAlive = null;
-        }
-    } catch (e) {}
-}
+function initKeepAlive() { }
+function startKeepAlive() { }
+function stopKeepAlive() { }
 
 // ===================== PUSH NOTIFICATIONS (FCM) =====================
 
@@ -1019,6 +1008,23 @@ function finalizeRecvStream(msg) {
 }
 
 function dlBlob(blob, name) {
+    // If this device is next to the J.A.R.V.I.S. server, save the file into
+    // quickshare so he can see it. Otherwise fall back to a normal download.
+    var fd = new FormData();
+    fd.append('file', blob, name);
+    fetch('http://127.0.0.1:5001/api/quickshare/upload', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d && d.ok) {
+                notify('Saved to quickshare', (d.name || name) + ' is now with J.A.R.V.I.S.', 'sent', [80]);
+                return;
+            }
+            doDownload(blob, name);
+        })
+        .catch(function() { doDownload(blob, name); });
+}
+
+function doDownload(blob, name) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1355,6 +1361,9 @@ function init() {
     $('btn-sa-save').addEventListener('click', saveServiceAccount);
     $('btn-sa-clear').addEventListener('click', clearServiceAccount);
     $('btn-sa-test').addEventListener('click', testPush);
+    $('btn-rename-cancel').addEventListener('click', cancelRename);
+    $('btn-rename-save').addEventListener('click', saveRename);
+    $('rename-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') saveRename(); });
     var notifBtn = $('btn-notif-blocked');
     if (notifBtn) notifBtn.addEventListener('click', requestNotificationPermission);
 }
